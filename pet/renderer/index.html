@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌面宠物</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: transparent;
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    user-select: none; -webkit-user-select: none;
+  }
+  #stage {
+    position: fixed; right: 24px; bottom: 24px;
+    cursor: pointer;
+  }
+  #pet { display: block; }
+  #pet.sleeping { filter: saturate(.4) brightness(.85); }
+  #bubble {
+    position: absolute; bottom: calc(100% + 10px); right: 0;
+    max-width: 220px; padding: 8px 12px;
+    background: rgba(255,255,255,.95); color: #333;
+    border-radius: 14px; font-size: 13px; line-height: 1.5;
+    box-shadow: 0 4px 16px rgba(0,0,0,.18);
+    opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s;
+    pointer-events: none; white-space: pre-wrap; word-break: break-word;
+  }
+  #bubble.show { opacity: 1; transform: translateY(0); }
+  #bubble:after {
+    content: ""; position: absolute; top: 100%; right: 28px;
+    border: 7px solid transparent; border-top-color: rgba(255,255,255,.95);
+  }
+  #menu {
+    position: absolute; bottom: calc(100% + 10px); right: 0;
+    background: rgba(255,255,255,.97); border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.18); padding: 6px;
+    display: none; min-width: 150px; z-index: 10;
+  }
+  #menu.show { display: block; }
+  #menu button {
+    display: block; width: 100%; text-align: left;
+    border: 0; background: none; padding: 8px 10px; font-size: 13px;
+    border-radius: 8px; cursor: pointer; color: #333;
+  }
+  #menu button:hover { background: #f0f4ff; }
+  #menubg { position: fixed; inset: 0; display: none; }
+  #menubg.show { display: block; }
+  @media (prefers-reduced-motion: reduce) {
+    #bubble { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="menubg"></div>
+  <div id="stage">
+    <div id="bubble"></div>
+    <div id="menu"></div>
+    <canvas id="pet" width="192" height="208"></canvas>
+  </div>
+  <script src="/pet.js?token=__TOKEN__"></script>
+</body>
+</html>
