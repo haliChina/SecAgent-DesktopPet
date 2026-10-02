@@ -6,7 +6,8 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { createPetServer } from "./pet/server.mjs";
 import { createPetState } from "./pet/state.mjs";
-import { scanSkins, defaultSkinDirs } from "./pet/skins.mjs";
+import { scanSkins, defaultSkinDirs, publicFormat } from "./pet/skins.mjs";
+import { createStore } from "./pet/store.mjs";
 import { mergeConfig } from "./settings/config-schema.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -21,9 +22,10 @@ function expandHome(p) {
 const PET_RULES = `## 桌面宠物规则（Desktop Pet）
 - 任务开始 / 调用工具前：可用 pet_emote(running) 让桌宠进入干活状态。
 - 需要用户确认或等待输入时：pet_emote(waiting)。
-- 任务成功完成：pet_emote(task_done 事件用 pet_say 庆祝，如“搞定！”)；失败时 pet_emote(failed)。
+- 任务成功完成：pet_emote(jumping) 庆祝，配合 pet_say（如“搞定！”）；失败时 pet_emote(failed)。
 - 想让桌宠说话时用 pet_say，文字简短口语化（≤40 字），不要刷屏。
-- 用户提到桌宠/宠物/换皮肤时，用 pet_skin 切换社区 Codex 皮肤。`;
+- 用户提到桌宠/宠物/换皮肤时，用 pet_skin 切换社区 Codex 皮肤。
+- 本地没有想要的皮肤时，用 pet_store 按名字搜索，再传 slug 安装到 ~/.codex/pets。`;
 
 export async function activate(api) {
   const readConfig = () => {
@@ -81,7 +83,8 @@ export async function activate(api) {
     skinFile: (id) => listSkins().find((s) => s.id === id)?.spritesheet ?? null,
     getConfig: () => ({ ...readConfig(), activeSkinId: activeSkinId() }),
     pageHtml,
-    petJs
+    petJs,
+    format: publicFormat()
   });
   const petUrl = await server.start();
 
@@ -191,6 +194,47 @@ export async function activate(api) {
     }
   );
 
+  // 工具：从 Codex 社区商店（petdex）搜索 / 安装皮肤到 ~/.codex/pets
+  const store = createStore((url, init) => {
+    if (typeof api.fetch !== "function") throw new Error("当前宿主未提供网络能力，无法访问桌宠商店");
+    return api.fetch(url, init);
+  });
+
+  api.registerTool(
+    {
+      name: "pet_store",
+      description: "在 Codex 社区桌宠商店（petdex）里找皮肤。不传 query 列出热门，传 slug 则安装到 ~/.codex/pets 并立即可换。",
+      inputSchema: {
+        type: "object", additionalProperties: false,
+        properties: {
+          query: { type: "string", description: "搜索词（皮肤名或类别）；留空列目录" },
+          slug: { type: "string", description: "要安装的皮肤 slug（英文短横线名）" }
+        }
+      },
+      hidden: false
+    },
+    async (a) => {
+      if (a.slug) {
+        const r = await store.install(a.slug);
+        const skins = listSkins();
+        if (skins.some((s) => s.id === r.slug)) skinOverride = r.slug;
+        return { ok: true, installed: r, active: activeSkinId(), count: skins.length };
+      }
+      const results = await store.search(a.query, 20);
+      return { count: results.length, pets: results };
+    }
+  );
+
+  // 久无互动自动入睡（config.idleSleepSec，0 = 不睡）
+  let sleepTimer = null;
+  function armSleep() {
+    if (sleepTimer) clearTimeout(sleepTimer);
+    const sec = Number(readConfig().idleSleepSec) || 0;
+    if (sec <= 0) return;
+    sleepTimer = setTimeout(() => pet.dispatch("sleep"), sec * 1000);
+    sleepTimer.unref?.();
+  }
+
   api.registerSkill("skills/desktop-pet", /桌宠|宠物|desktop.?pet/i);
 
   api.registerPrompt("pet_rules", () => {
@@ -202,11 +246,13 @@ export async function activate(api) {
   if (readConfig().petEnabled) {
     // 不自动弹窗：首次由用户或模型调用 pet_show 展示，避免打扰
     api.setStatus(overlayMode === "overlay" ? "已就绪（overlay 模式）" : "已就绪（浏览器降级模式）");
+    armSleep();
   } else {
     api.setStatus("已停用（设置中关闭）");
   }
 
   return async () => {
+    if (sleepTimer) clearTimeout(sleepTimer);
     try { await overlay?.close?.(); } catch { /* ignore */ }
     await server.stop().catch(() => {});
   };

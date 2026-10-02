@@ -1,9 +1,12 @@
 // 桌宠状态机：会话/交互事件 → 动画状态。纯逻辑，不依赖 DOM，可单元测试。
 //
 // 状态：
-//   idle 睡待机 / waiting 等待用户 / running 执行中 / review 复核中 /
+//   idle 待机 / waiting 等待用户 / running 执行中 / review 复核中 /
 //   failed 出错 / jumping 庆祝 / waving 挥手（被戳） / sleeping 睡觉
 //  timed 状态会在 duration 后自动回到 idle（由 tick 驱动）。
+//
+// 拖拽不进状态枚举：它是渲染层的运动层，优先于一切动画状态（与 whale-girl 的
+// drag > 事件 burst > ... > idle 优先级一致），方向决定用 running-right / running-left 行。
 
 export const STATES = [
   "idle",
@@ -33,6 +36,7 @@ export function createPetState(options = {}) {
   let until = 0; // timed 状态的到期时间，0 表示非常驻
   let bubble = null; // { text, until }
   let look = null; // { dx, dy } 注视方向（-1..1），null 表示不追视
+  let dragDir = 0; // -1 左 / 0 未拖 / 1 右
 
   function set(next, durationMs = 0) {
     if (!STATES.includes(next)) throw new Error(`未知桌宠状态：${next}`);
@@ -66,15 +70,28 @@ export function createPetState(options = {}) {
       case "pat": // 被摸头 → 开心跳跃
         set("jumping", timed.jumping);
         break;
+      case "drag_start": // 开始拖拽：记录方向，唤醒
+        dragDir = arg === -1 ? -1 : arg === 1 ? 1 : 1;
+        if (state === "sleeping") set("idle");
+        break;
+      case "drag_move": // 拖拽中更新方向（-1 左 / 1 右）
+        if (dragDir !== 0) dragDir = arg === -1 ? -1 : 1;
+        break;
+      case "drag_end": // 松手：退出拖拽，被拖过则短暂挥手
+        if (dragDir !== 0) {
+          dragDir = 0;
+          set("waving", 900);
+        }
+        break;
       case "sleep": // 久无互动 → 睡觉
-        if (state === "idle") set("sleeping");
+        if (state === "idle" && dragDir === 0) set("sleeping");
         break;
       case "wake": // 有互动 → 醒来
         if (state === "sleeping") set("idle");
         break;
       case "say": // 说话只冒泡，不强制切状态（waiting/running 下保持原状态）
         bubble = { text: String(arg ?? ""), until: t + (options.bubbleMs ?? 4000) };
-        if (state === "idle" || state === "sleeping") set("waiting");
+        if ((state === "idle" || state === "sleeping") && dragDir === 0) set("waiting");
         break;
       case "emote": // 模型/用户强制指定状态
         set(String(arg), timed[String(arg)] ?? 0);
@@ -107,7 +124,8 @@ export function createPetState(options = {}) {
       since,
       msInState: now() - since,
       bubble: bubble && now() < bubble.until ? bubble.text : null,
-      look
+      look,
+      dragDir
     };
   }
 

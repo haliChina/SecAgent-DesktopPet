@@ -81,8 +81,10 @@ export function createPetServer(options) {
     }
     if (pathname === "/pet.js") {
       if (!checkToken(url)) { res.writeHead(401); res.end("unauthorized"); return; }
+      // 契约表由 pet/skins.mjs 单一事实源注入，渲染页不重复抄一份状态表。
+      const prelude = `window.__PET_FORMAT=${JSON.stringify(options.format ?? {})};\n`;
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      res.end(petJs);
+      res.end(prelude + petJs);
       return;
     }
     if (pathname.startsWith("/skin-file/")) {

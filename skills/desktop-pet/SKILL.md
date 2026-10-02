@@ -14,9 +14,10 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 
 ## 皮肤（兼容社区 Codex 皮肤）
 
-- 皮肤 = `pet.json` + `spritesheet.webp`，v2 版式 1536×2288（8×11，每格192×208），也兼容 8×9 classic；
-- 社区皮肤放在 `~/.codex/pets/<名字>/` 下即被自动发现，零转换；
-- `pet_skin` 不传参列出皮肤，传 `skinId` 切换；
+- 皮肤 = `pet.json` + `spritesheet.webp`，v2 版式 1536×2288（8×11，每格 192×208），也兼容 8×9 classic；
+- 自动发现的位置：`~/.codex/pets/`、`~/.petdex/pets/`（`npx petdex install` 装的）、`$PETDEX_PET`，零转换；
+- `pet_skin` 不传参列出皮肤，传 `skinId` 切换；切换会热生效，不用重开窗口；
+- 本地没有想要的皮肤时，先 `pet_store` 传 `query` 搜索，再传 `slug` 安装，装完立刻可换；
 - 没有皮肤时显示内置小鲸鱼兜底形象，照样可交互。
 
 ## 工具契约
@@ -28,6 +29,7 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 | `desktop-pet__pet_say` | `text`（≤40字为佳） | 桌宠冒泡说话 |
 | `desktop-pet__pet_emote` | `emote`: idle/waiting/running/review/failed/jumping/waving/sleeping | 切换动画状态 |
 | `desktop-pet__pet_skin` | 可选 `skinId` | 列出/切换皮肤 |
+| `desktop-pet__pet_store` | 可选 `query` 或 `slug` | 社区商店搜索 / 安装皮肤 |
 | `desktop-pet__pet_show` | 无 | 显示桌宠 |
 | `desktop-pet__pet_hide` | 无 | 隐藏桌宠 |
 
@@ -41,7 +43,7 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 ## 用户侧交互（渲染页）
 
 - 单击：戳戳 → 挥手 + 随机回应；双击：摸头 → 开心；
-- 拖拽：移动桌宠；悬停：16 方向追视（有注视行的皮肤）；
+- 拖拽：移动桌宠并切成走行动画（方向跟随）；悬停：16 方向追视（v2 皮肤用注视行，v1 退化为水平翻转）；
 - 右键：菜单（说句话 / 换皮肤 / 睡觉 / 隐藏）。
 
 ## 约束
