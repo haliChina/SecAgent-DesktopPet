@@ -214,6 +214,9 @@
   }
 
   // ---------- 交互 ----------
+  // 宿主桥接：优先新版 __secagentOverlay，兼容旧名 __petHost
+  const hostBridge = window.__secagentOverlay || window.__petHost || null;
+
   function canvasPoint(e) {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
@@ -230,8 +233,8 @@
       const dx = e.clientX - S.downPos.x, dy = e.clientY - S.downPos.y;
       if (Math.hypot(dx, dy) > 6) S.dragMoved = true;
       if (S.dragMoved) {
-        if (window.__petHost && window.__petHost.move) {
-          window.__petHost.move(dx, dy);
+        if (hostBridge && hostBridge.move) {
+          hostBridge.move(dx, dy);
           S.downPos = { x: e.clientX, y: e.clientY };
         } else {
           // 浏览器降级：在页面内拖动

@@ -1,1 +1,17 @@
-{"apiVersion":1,"author":"hali","description":"在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤（pet.json + spritesheet），跟随任务状态切换动画，可戳戳、摸头、拖拽、对话气泡。","id":"desktop-pet","main":"main.mjs","name":"桌面宠物","permissions":["agent.tools","agent.skills","agent.prompts","agent.settings"],"repository":"https://github.com/haliChina/SecAgent-DesktopPet","version":"0.1.0"}
+{
+  "apiVersion": 1,
+  "author": "hali",
+  "description": "在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤（pet.json + spritesheet），跟随任务状态切换动画，可戳戳、摸头、拖拽、对话气泡。",
+  "id": "desktop-pet",
+  "main": "main.mjs",
+  "name": "桌面宠物",
+  "permissions": [
+    "agent.tools",
+    "agent.skills",
+    "agent.prompts",
+    "agent.settings",
+    "agent.overlay"
+  ],
+  "repository": "https://github.com/haliChina/SecAgent-DesktopPet",
+  "version": "0.1.0"
+}
