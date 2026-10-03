@@ -268,7 +268,7 @@ export async function activate(api) {
   });
 
   // 晚订阅补齐：浮窗/插件可能在回合进行到一半才起来，读一次快照知道当前状态
-  if (hasOnActivity && typeof api.getActivity === "function") {
+  if (hasOnActivity && typeof api.getActivity === "function" && readConfig().petEnabled) {
     try {
       const snapshot = api.getActivity();
       if (snapshot?.phase === "running" || snapshot?.phase === "waiting" || snapshot?.phase === "thinking") {

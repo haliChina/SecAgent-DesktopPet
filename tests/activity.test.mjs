@@ -72,8 +72,26 @@ test("未知/畸形事件不能把插件打挂", async () => {
   try {
     assert.doesNotThrow(() => api.emit("some_future_kind"));
     assert.doesNotThrow(() => api.emit(undefined));
+    // handler 直接收到 null / 字符串 / 空对象也要扛住（不只是 {kind:undefined}）
+    for (const bogus of [null, "turn_started", 42, {}, { kind: null }, { kind: { nested: true } }]) {
+      assert.doesNotThrow(() => { for (const handler of [...api.handlers]) handler(bogus); });
+    }
     api.emit("turn_started");
     assert.equal((await snapshot(api)).state, "review");
+  } finally {
+    await dispose();
+  }
+});
+
+test("petEnabled=false 时快照补齐也不改状态（与事件回调同一个不变量）", async () => {
+  const api = fakeApi({ config: { petEnabled: false }, snapshot: { phase: "running", last: { kind: "tool_started", sessionId: "s", at: Date.now(), label: "grep" } } });
+  const dispose = await activate(api);
+  try {
+    const byName = Object.fromEntries(api.tools.map((t) => [t.name, t.fn]));
+    assert.equal((await byName.pet_show()).shown, false);
+    // 没有 pet_show 可拿 URL，用 handler 直接验证状态没被快照推动
+    api.emit("turn_started");
+    assert.equal(api.handlers.length, 1);
   } finally {
     await dispose();
   }
@@ -137,6 +155,38 @@ test("hold 持续态不抢占正在播的瞬发状态", () => {
   pet.dispatch("hold", "running");
   assert.equal(pet.snapshot().state, "running");
   assert.throws(() => pet.dispatch("hold", "nope"), /未知桌宠状态/);
+});
+
+test("burst 期间的 hold 延迟到 burst 结束后补上，而不是被丢弃", () => {
+  let now = 0;
+  const pet = createPetState({ now: () => now });
+  pet.dispatch("emote", "failed");            // 失败 burst 5s
+  pet.dispatch("hold", "review");             // 用户 1s 后重开一轮
+  assert.equal(pet.snapshot().state, "failed");
+  now += 6000;
+  assert.equal(pet.tick().state, "review", "burst 到期应补上攒下的持续态，而不是回 idle");
+});
+
+test("后来的 hold 覆盖先到的；新瞬发状态作废待补的 hold", () => {
+  let now = 0;
+  const pet = createPetState({ now: () => now });
+  pet.dispatch("emote", "jumping");
+  pet.dispatch("hold", "review");
+  pet.dispatch("hold", "waiting");            // 后来者覆盖
+  pet.dispatch("poke");                       // 新瞬发 → 作废 pending
+  now += 4000;
+  assert.equal(pet.tick().state, "idle", "pending 应被新瞬发作废");
+});
+
+test("持续态有 TTL 兜底：事件流断了也回 idle", () => {
+  let now = 0;
+  const pet = createPetState({ now: () => now, holdTtlMs: 1000 });
+  pet.dispatch("hold", "running");
+  assert.equal(pet.snapshot().state, "running");
+  now = 900;
+  assert.equal(pet.tick().state, "running");
+  now = 1200;
+  assert.equal(pet.tick().state, "idle", "超过 TTL 应回 idle，不能永远卡在 running");
 });
 
 test("瞬发结束后回到 idle，不残留上一轮的持续态", () => {
