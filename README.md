@@ -5,8 +5,10 @@
 - **皮肤兼容**：严格实现社区精灵图契约——v1 `1536×1872`（8×9）、v2 `1536×2288`（8×11），每格 `192×208`。
   逐状态的**帧数与逐帧时长**按契约表播放（idle 6 帧 / waving 4 帧 / jumping 5 帧…），不是一律 8 帧。
 - **商店直装**：`pet_store` 工具直连 Codex 社区商店（petdex，4800+ 只），一键装到 `~/.codex/pets`。
-- **状态联动**：idle / waiting / running / review / failed / jumping / waving / sleeping，
-  外加 `running-right` / `running-left` 行走行（拖拽时自动使用，方向跟随）。
+- **状态联动**：由宿主活动事件（`api.onActivity`，需 SecAgent ≥ 0.3）直接驱动——
+  回合开始/工具执行/请求审批/回合完成/失败/中断各自对应一个动作，不再依赖模型自觉调工具；
+  老宿主没有该 API 时自动降级为 `pet_emote` 工具驱动。
+  另有 `running-right` / `running-left` 行走行（拖拽时自动使用，方向跟随）。
 - **交互**：单击戳戳、双击摸头、拖拽移动、16 方位追视（v2 皮肤）、右键菜单、久无自动入睡。
 - **显示模式**：宿主支持 `agent.overlay` 时为真·桌面浮窗（透明置顶 + **指针命中才接管点击**），
   否则降级为系统浏览器标签页。
@@ -62,7 +64,8 @@ npm run pack      # 生成 release/desktop-pet-<version>.zip
 - [x] 精灵图契约严格实现（帧数 / 逐帧时长 / 16 方位格序 / 图集尺寸校验）
 - [x] 指针命中才接管点击（overlay 模式可交互）
 - [x] 商店直装（petdex manifest + 主机白名单）
-- [ ] **宿主活动事件订阅**（`api.onActivity` 或只读快照 + SSE）——提案见 `docs/SESSION_EVENTS.md`。
-      当前动画靠模型调 `pet_emote` 驱动，宿主一旦提供事件即可去掉这层不可靠性。
+- [x] **宿主活动事件订阅**——插件侧已接好 `api.onActivity` + `api.getActivity()` 快照补齐；
+      宿主实现见 `haliChina/SecAgent` 分支 `feat/plugin-activity-events`，契约见宿主 `docs/plugins.md`。
+      老宿主（无 `onActivity`）自动降级，功能不挂。
 - [ ] 养成玩法（XP / 等级 / 称号，照 whale-girl 的零负反馈账本）
 - [ ] Live2D 皮肤支持
