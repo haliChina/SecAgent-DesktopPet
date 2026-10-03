@@ -96,6 +96,15 @@ export function createPetState(options = {}) {
       case "emote": // 模型/用户强制指定状态
         set(String(arg), timed[String(arg)] ?? 0);
         break;
+      // 宿主活动事件驱动的持续态（如「正在思考」「正在干活」）。
+      // 不抢占还在播的瞬发状态：任务刚完成的挥手不该被紧接着的 tool_finished 顶掉。
+      case "hold": {
+        const next = String(arg);
+        if (!STATES.includes(next)) throw new Error(`未知桌宠状态：${next}`);
+        if (until && t < until) break; // burst 优先
+        set(next, 0);
+        break;
+      }
       default:
         throw new Error(`未知桌宠事件：${event}`);
     }

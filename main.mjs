@@ -225,6 +225,30 @@ export async function activate(api) {
     }
   );
 
+  // 宿主活动事件驱动（需 agent.activity）：回合/工具/审批/完成/失败 → 动画。
+  // 这是主路径；pet_emote 工具保留给不支持事件的老宿主兜底。
+  // 事件里没有 phase 字段（phase 只在 api.getActivity() 快照上），所以按 kind 映射。
+  const ACTIVITY_MAP = {
+    turn_started: ["hold", "review"],     // 思考中：复用复核行
+    tool_started: ["hold", "running"],
+    tool_finished: ["hold", "review"],    // 工具返回后模型还要继续推理
+    approval_requested: ["hold", "waiting"],
+    approval_resolved: ["hold", "running"],
+    turn_completed: ["emote", "waving"],  // 回合完成：挥手
+    turn_failed: ["emote", "failed"],
+    turn_blocked: ["hold", "waiting"]     // 用户中断：需要注意到，不是失败
+  };
+  const hasOnActivity = typeof api.onActivity === "function";
+  const unsubscribeActivity = hasOnActivity
+    ? api.onActivity((event) => {
+      try {
+        if (!readConfig().petEnabled) return;
+        const mapped = ACTIVITY_MAP[event?.kind];
+        if (mapped) pet.dispatch(mapped[0], mapped[1]);
+      } catch { /* 订阅者异常不得影响宿主与用户 */ }
+    })
+    : null;
+
   // 久无互动自动入睡（config.idleSleepSec，0 = 不睡）
   let sleepTimer = null;
   function armSleep() {
@@ -243,6 +267,17 @@ export async function activate(api) {
     return PET_RULES;
   });
 
+  // 晚订阅补齐：浮窗/插件可能在回合进行到一半才起来，读一次快照知道当前状态
+  if (hasOnActivity && typeof api.getActivity === "function") {
+    try {
+      const snapshot = api.getActivity();
+      if (snapshot?.phase === "running" || snapshot?.phase === "waiting" || snapshot?.phase === "thinking") {
+        const mapped = snapshot.phase === "thinking" ? ["hold", "review"] : ["hold", snapshot.phase];
+        pet.dispatch(mapped[0], mapped[1]);
+      }
+    } catch { /* 读不到快照就按 idle 起步 */ }
+  }
+
   if (readConfig().petEnabled) {
     // 不自动弹窗：首次由用户或模型调用 pet_show 展示，避免打扰
     api.setStatus(overlayMode === "overlay" ? "已就绪（overlay 模式）" : "已就绪（浏览器降级模式）");
@@ -253,6 +288,7 @@ export async function activate(api) {
 
   return async () => {
     if (sleepTimer) clearTimeout(sleepTimer);
+    try { unsubscribeActivity?.(); } catch { /* ignore */ }
     try { await overlay?.close?.(); } catch { /* ignore */ }
     await server.stop().catch(() => {});
   };
