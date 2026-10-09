@@ -33,7 +33,12 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 | `desktop-pet__pet_show` | 无 | 显示桌宠 |
 | `desktop-pet__pet_hide` | 无 | 隐藏桌宠 |
 
-## 状态使用指南
+## 状态联动（优先）
+
+宿主支持活动事件时（SecAgent ≥ 0.3，声明 `agent.activity`），桌宠动画由宿主直接驱动，
+**不需要**你手动调 `pet_emote`——那只是老宿主或需要临时改情绪时的兜底手段。
+
+## 状态使用指南（兜底）
 
 - 开始干活前：`pet_emote(running)`；需要用户确认时：`pet_emote(waiting)`；
 - 任务完成：`pet_emote(jumping)` + `pet_say("搞定！")`；

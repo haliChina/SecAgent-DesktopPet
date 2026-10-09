@@ -8,13 +8,20 @@ import { spawn as defaultSpawn } from "node:child_process";
 
 function defaultOpenBrowser(url) {
   const platform = process.platform;
-  if (platform === "win32") {
-    defaultSpawn("cmd", ["/c", "start", "", url], { windowsHide: true });
-  } else if (platform === "darwin") {
-    defaultSpawn("open", [url], { windowsHide: true });
-  } else {
-    defaultSpawn("xdg-open", [url], { windowsHide: true });
-  }
+  // 打不开浏览器不能带崩宿主：无头/精简环境没有 xdg-open/open 时 spawn 会触发
+  // 异步 'error' 事件，未监听就是 uncaughtException。页面 URL 会随工具结果返回，
+  // 用户仍可手动打开，这里静默降级即可。
+  let child;
+  try {
+    if (platform === "win32") {
+      child = defaultSpawn("cmd", ["/c", "start", "", url], { windowsHide: true });
+    } else if (platform === "darwin") {
+      child = defaultSpawn("open", [url], { windowsHide: true });
+    } else {
+      child = defaultSpawn("xdg-open", [url], { windowsHide: true });
+    }
+  } catch { return; }
+  child?.on?.("error", () => {});
 }
 
 function sendJson(res, code, obj) {
