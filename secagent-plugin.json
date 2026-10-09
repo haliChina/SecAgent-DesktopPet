@@ -11,8 +11,9 @@
     "agent.prompts",
     "agent.settings",
     "agent.overlay",
-    "network.http"
+    "network.http",
+    "agent.activity"
   ],
   "repository": "https://github.com/haliChina/SecAgent-DesktopPet",
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

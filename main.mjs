@@ -38,6 +38,15 @@ export async function activate(api) {
   };
 
   const pet = createPetState();
+  // 久无互动入睡的定时器只在「回到 idle」时布防：回到 idle 的途径很多
+  // （tick 到期、hold TTL 兜底、wake、emote），集中观察，否则定时器只在
+  // 启动时布防一次，第一次在非 idle 时被忽略后，整个会话都不会再自动入睡。
+  let lastObservedState = pet.snapshot().state;
+  function observeState(next) {
+    if (next === "idle" && lastObservedState !== "idle") armSleep();
+    lastObservedState = next;
+    return next;
+  }
   let skinOverride = null; // pet_skin 工具的会话级覆盖
 
   function skinDirs() {
@@ -70,14 +79,18 @@ export async function activate(api) {
   const petJs = fs.readFileSync(path.join(here, "pet", "renderer", "pet.js"), "utf8");
 
   const server = createPetServer({
-    getSnapshot: () => pet.tick(),
+    getSnapshot: () => {
+      const snap = pet.tick();
+      observeState(snap.state);
+      return snap;
+    },
     dispatch: (event, arg) => {
       if (event === "skin") {
         const skins = listSkins();
         if (skins.some((s) => s.id === arg)) skinOverride = String(arg);
-        return pet.snapshot().state;
+        return observeState(pet.snapshot().state);
       }
-      return pet.dispatch(event, arg);
+      return observeState(pet.dispatch(event, arg));
     },
     listSkins,
     skinFile: (id) => listSkins().find((s) => s.id === id)?.spritesheet ?? null,
@@ -151,7 +164,7 @@ export async function activate(api) {
       hidden: false
     },
     async (a) => {
-      const next = pet.dispatch("emote", a.emote);
+      const next = observeState(pet.dispatch("emote", a.emote));
       return { ok: true, state: next };
     }
   );
@@ -189,7 +202,7 @@ export async function activate(api) {
     },
     async () => {
       if (overlay && typeof overlay.hide === "function") { await overlay.hide(); return { ok: true, mode: "overlay" }; }
-      pet.dispatch("sleep");
+      observeState(pet.dispatch("sleep"));
       return { ok: true, mode: "browser", note: "浏览器降级模式：已让桌宠入睡，关闭浏览器标签页可彻底隐藏" };
     }
   );
@@ -225,13 +238,37 @@ export async function activate(api) {
     }
   );
 
+  // 宿主活动事件驱动（需 agent.activity）：回合/工具/审批/完成/失败 → 动画。
+  // 这是主路径；pet_emote 工具保留给不支持事件的老宿主兜底。
+  // 事件里没有 phase 字段（phase 只在 api.getActivity() 快照上），所以按 kind 映射。
+  const ACTIVITY_MAP = {
+    turn_started: ["hold", "review"],     // 思考中：复用复核行
+    tool_started: ["hold", "running"],
+    tool_finished: ["hold", "review"],    // 工具返回后模型还要继续推理
+    approval_requested: ["hold", "waiting"],
+    approval_resolved: ["hold", "running"],
+    turn_completed: ["emote", "waving"],  // 回合完成：挥手
+    turn_failed: ["emote", "failed"],
+    turn_blocked: ["hold", "waiting"]     // 用户中断：需要注意到，不是失败
+  };
+  const hasOnActivity = typeof api.onActivity === "function";
+  const unsubscribeActivity = hasOnActivity
+    ? api.onActivity((event) => {
+      try {
+        if (!readConfig().petEnabled) return;
+        const mapped = ACTIVITY_MAP[event?.kind];
+        if (mapped) pet.dispatch(mapped[0], mapped[1]);
+      } catch { /* 订阅者异常不得影响宿主与用户 */ }
+    })
+    : null;
+
   // 久无互动自动入睡（config.idleSleepSec，0 = 不睡）
   let sleepTimer = null;
   function armSleep() {
     if (sleepTimer) clearTimeout(sleepTimer);
     const sec = Number(readConfig().idleSleepSec) || 0;
     if (sec <= 0) return;
-    sleepTimer = setTimeout(() => pet.dispatch("sleep"), sec * 1000);
+    sleepTimer = setTimeout(() => observeState(pet.dispatch("sleep")), sec * 1000);
     sleepTimer.unref?.();
   }
 
@@ -243,6 +280,17 @@ export async function activate(api) {
     return PET_RULES;
   });
 
+  // 晚订阅补齐：浮窗/插件可能在回合进行到一半才起来，读一次快照知道当前状态
+  if (hasOnActivity && typeof api.getActivity === "function" && readConfig().petEnabled) {
+    try {
+      const snapshot = api.getActivity();
+      if (snapshot?.phase === "running" || snapshot?.phase === "waiting" || snapshot?.phase === "thinking") {
+        const mapped = snapshot.phase === "thinking" ? ["hold", "review"] : ["hold", snapshot.phase];
+        pet.dispatch(mapped[0], mapped[1]);
+      }
+    } catch { /* 读不到快照就按 idle 起步 */ }
+  }
+
   if (readConfig().petEnabled) {
     // 不自动弹窗：首次由用户或模型调用 pet_show 展示，避免打扰
     api.setStatus(overlayMode === "overlay" ? "已就绪（overlay 模式）" : "已就绪（浏览器降级模式）");
@@ -253,6 +301,7 @@ export async function activate(api) {
 
   return async () => {
     if (sleepTimer) clearTimeout(sleepTimer);
+    try { unsubscribeActivity?.(); } catch { /* ignore */ }
     try { await overlay?.close?.(); } catch { /* ignore */ }
     await server.stop().catch(() => {});
   };

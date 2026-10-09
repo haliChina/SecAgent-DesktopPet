@@ -37,12 +37,21 @@ export function createPetState(options = {}) {
   let bubble = null; // { text, until }
   let look = null; // { dx, dy } 注视方向（-1..1），null 表示不追视
   let dragDir = 0; // -1 左 / 0 未拖 / 1 右
+  // burst 窗口内到达的 hold 不直接丢弃而是记下来，burst 到期后补上：
+  // 例如 turn_failed 播 5s 期间用户重开一轮，turn_started 的思考态不能被吞掉，
+  // 否则桌宠会回 idle 而模型其实正在推理。
+  let pendingHold = null;
+  // 事件流断了（宿主崩溃、丢了终态事件）时兜底回 idle，避免永远卡在 running。
+  const holdTtlMs = options.holdTtlMs ?? 15 * 60_000;
+  let holdUntil = 0;
 
   function set(next, durationMs = 0) {
     if (!STATES.includes(next)) throw new Error(`未知桌宠状态：${next}`);
     state = next;
     since = now();
     until = durationMs > 0 ? since + durationMs : 0;
+    // 新的瞬发状态到达，作废等待补上的持续态
+    if (durationMs > 0) pendingHold = null;
   }
 
   /** 外部事件 → 状态迁移。返回迁移后的状态。 */
@@ -96,6 +105,18 @@ export function createPetState(options = {}) {
       case "emote": // 模型/用户强制指定状态
         set(String(arg), timed[String(arg)] ?? 0);
         break;
+      // 宿主活动事件驱动的持续态（如「正在思考」「正在干活」）。
+      // 不抢占还在播的瞬发状态：任务刚完成的挥手不该被紧接着的 tool_finished 顶掉。
+      case "hold": {
+        const next = String(arg);
+        if (!STATES.includes(next)) throw new Error(`未知桌宠状态：${next}`);
+        if (until && t < until) { pendingHold = next; break; } // burst 优先，但记下来
+        pendingHold = null;
+        holdUntil = 0;
+        set(next, 0);
+        holdUntil = holdTtlMs > 0 ? t + holdTtlMs : 0;
+        break;
+      }
       default:
         throw new Error(`未知桌宠事件：${event}`);
     }
@@ -106,9 +127,17 @@ export function createPetState(options = {}) {
   function tick() {
     const t = now();
     if (until && t >= until) {
-      // timed 结束：failed 之后回 idle，其余同理
+      // timed 结束：failed 之后回 idle；burst 期间攒下的持续态在这里补上
       set("idle");
+      if (pendingHold) {
+        const next = pendingHold;
+        pendingHold = null;
+        set(next, 0);
+        holdUntil = holdTtlMs > 0 ? t + holdTtlMs : 0;
+      }
     }
+    // 持续态兜底：事件流断了也不永远卡着
+    if (holdUntil && t >= holdUntil) { holdUntil = 0; if (!until) set("idle"); }
     if (bubble && t >= bubble.until) bubble = null;
     return snapshot();
   }
