@@ -8,7 +8,7 @@ import { createPetServer } from "./pet/server.mjs";
 import { createPetState } from "./pet/state.mjs";
 import { scanSkins, defaultSkinDirs, publicFormat } from "./pet/skins.mjs";
 import { createStore } from "./pet/store.mjs";
-import { mergeConfig } from "./settings/config-schema.mjs";
+import { mergeConfig, normalizeField, describeSettings } from "./settings/config-schema.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -235,6 +235,56 @@ export async function activate(api) {
       }
       const results = await store.search(a.query, 20);
       return { count: results.length, pets: results };
+    }
+  );
+
+  // 工具：查看/修改桌宠设置——宿主暂无插件设置面板渲染（settingsPages 只展示不打开），
+  // 这是用户改 petEnabled / 尺寸 / 入睡时间等的唯一入口。
+  api.registerTool(
+    {
+      name: "pet_config",
+      description: "查看或修改桌宠设置。action=list 返回全部可调项与当前值；action=set 修改一项（key + value，越界值自动钳制）。用户说「把桌宠关了 / 调大一点 / 多久没互动就睡觉」等时调用。",
+      inputSchema: {
+        type: "object", additionalProperties: false, required: ["action"],
+        properties: {
+          action: { type: "string", enum: ["list", "set"] },
+          key: { type: "string", description: "action=set 时的设置键名（先 list 查看）" },
+          value: { description: "action=set 时的新值，类型随设置项（布尔/数字/字符串）" }
+        }
+      },
+      hidden: false
+    },
+    async (a) => {
+      if (a.action === "list") {
+        const current = readConfig();
+        return {
+          settings: describeSettings().map((g) => ({
+            group: g.title,
+            items: g.fields.map((f) => ({
+              key: f.key,
+              label: f.label,
+              value: current[f.key],
+              type: f.type,
+              ...(f.options ? { options: f.options.map((o) => o.value) } : {}),
+              ...(f.min != null ? { min: f.min, max: f.max } : {})
+            }))
+          }))
+        };
+      }
+      const key = String(a.key || "");
+      if (!key) throw new Error("pet_config set 需要 key（先 action=list 查看可调项）");
+      if (a.value === undefined) throw new Error("pet_config set 需要 value");
+      const normalized = normalizeField(key, a.value);
+      if (normalized === undefined) throw new Error(`未知设置项：${key}。用 action=list 查看全部。`);
+      if (typeof api.setConfig !== "function") throw new Error("当前宿主不支持写插件配置（api.setConfig 缺失）");
+      const raw = (typeof api.getConfig === "function" && api.getConfig()) || {};
+      const next = { ...raw, [key]: a.value };
+      const { config, dropped } = mergeConfig(next);
+      api.setConfig(next);
+      return {
+        ok: true, key, value: config[key],
+        ...(dropped.length ? { note: `以下键已按取值范围修正：${dropped.join(", ")}` } : {})
+      };
     }
   );
 

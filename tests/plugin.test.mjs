@@ -18,15 +18,52 @@ function fakeApi() {
   return api;
 }
 
-test("activate 注册 6 个工具、1 个 prompt、1 个 skill", async () => {
+test("activate 注册 7 个工具、1 个 prompt、1 个 skill", async () => {
   const api = fakeApi();
   const dispose = await activate(api);
   try {
     const names = api.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["pet_emote", "pet_hide", "pet_say", "pet_show", "pet_skin", "pet_store"]);
+    assert.deepEqual(names, ["pet_config", "pet_emote", "pet_hide", "pet_say", "pet_show", "pet_skin", "pet_store"]);
     assert.equal(api.prompts.length, 1);
     assert.equal(api.skills.length, 1);
     assert.match(api.statuses.at(-1).message, /已就绪/);
+  } finally {
+    await dispose();
+  }
+});
+
+test("pet_config：list 返回分组设置项与当前值", async () => {
+  const api = fakeApi();
+  const dispose = await activate(api);
+  try {
+    const byName = Object.fromEntries(api.tools.map((t) => [t.name, t.fn]));
+    const out = await byName.pet_config({ action: "list" });
+    assert.ok(Array.isArray(out.settings) && out.settings.length > 0);
+    const all = out.settings.flatMap((g) => g.items.map((i) => i.key));
+    assert.ok(all.includes("petEnabled") && all.includes("size") && all.includes("idleSleepSec"));
+    const size = out.settings.flatMap((g) => g.items).find((i) => i.key === "size");
+    assert.equal(size.value, 160); // 默认值
+    assert.equal(size.min, 96);
+  } finally {
+    await dispose();
+  }
+});
+
+test("pet_config：set 写入经宿主 setConfig 持久化，越界值钳制并提示", async () => {
+  const api = fakeApi();
+  const dispose = await activate(api);
+  try {
+    const byName = Object.fromEntries(api.tools.map((t) => [t.name, t.fn]));
+    const out = await byName.pet_config({ action: "set", key: "size", value: 9999 });
+    assert.equal(out.ok, true);
+    assert.equal(out.value, 320, "size 超上限应钳到 320");
+    assert.match(out.note, /size/);
+    assert.equal(api.config.size, 9999, "原值照存，读取时统一钳制");
+    const off = await byName.pet_config({ action: "set", key: "petEnabled", value: false });
+    assert.equal(off.value, false);
+    assert.equal(api.config.petEnabled, false);
+    await assert.rejects(() => byName.pet_config({ action: "set", key: "nope", value: 1 }), /未知设置项/);
+    await assert.rejects(() => byName.pet_config({ action: "set", key: "size" }), /value/);
   } finally {
     await dispose();
   }

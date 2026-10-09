@@ -17,7 +17,9 @@
 
 1. SecAgent → 设置 → 插件 → **从 ZIP 安装**，选择发布包 `desktop-pet-<version>.zip`；
 2. 启用插件；
-3. 对 Agent 说「把桌宠叫出来」（`pet_show`），或「换个皮肤」（`pet_skin`）。
+3. 对 Agent 说「把桌宠叫出来」（`pet_show`），或「换个皮肤」（`pet_skin`）；
+4. 调设置：对 Agent 说「把桌宠调大一点 / 关掉桌宠 / 多久没互动就睡觉」（`pet_config`，
+   action=list/set；宿主暂未提供插件设置面板渲染，这是目前唯一的设置入口）。
 
 ## 皮肤来源
 
