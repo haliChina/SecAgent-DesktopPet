@@ -199,3 +199,24 @@ test("瞬发结束后回到 idle，不残留上一轮的持续态", () => {
   pet.tick();
   assert.equal(pet.snapshot().state, "idle");
 });
+test("回到 idle 后重新布防自动入睡（review 期间到期不再吞掉后续入睡）", async (t) => {
+  const api = fakeApi({ config: { idleSleepSec: 60 } });
+  const dispose = await activate(api);
+  try {
+    api.emit("turn_started"); // hold review：模型思考中，不该睡
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    t.mock.timers.tick(61_000); // 启动时布防的 60s 到期：review 下 sleep 被忽略
+    assert.equal((await snapshot(api)).state, "review", "思考中定时器到期不应入睡");
+
+    api.emit("turn_failed"); // emote failed（5s burst）
+    assert.equal((await snapshot(api)).state, "failed");
+    t.mock.timers.tick(6_000); // burst 结束 → 下一次轮询回 idle，并应重新布防
+    assert.equal((await snapshot(api)).state, "idle");
+
+    t.mock.timers.tick(61_000); // 重新布防的定时器这次在 idle 下到期
+    assert.equal((await snapshot(api)).state, "sleeping", "回到 idle 后应重新布防自动入睡");
+  } finally {
+    t.mock.timers.reset();
+    await dispose();
+  }
+});
