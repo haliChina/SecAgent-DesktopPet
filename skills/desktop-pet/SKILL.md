@@ -32,6 +32,7 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 | `desktop-pet__pet_store` | 可选 `query` 或 `slug` | 社区商店搜索 / 安装皮肤 |
 | `desktop-pet__pet_show` | 无 | 显示桌宠 |
 | `desktop-pet__pet_hide` | 无 | 隐藏桌宠 |
+| `desktop-pet__pet_config` | `action`: list/set；set 另带 `key`/`value` | 查看/修改设置（开关、尺寸、入睡时间等） |
 
 ## 状态联动（优先）
 
