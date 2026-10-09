@@ -38,6 +38,15 @@ export async function activate(api) {
   };
 
   const pet = createPetState();
+  // 久无互动入睡的定时器只在「回到 idle」时布防：回到 idle 的途径很多
+  // （tick 到期、hold TTL 兜底、wake、emote），集中观察，否则定时器只在
+  // 启动时布防一次，第一次在非 idle 时被忽略后，整个会话都不会再自动入睡。
+  let lastObservedState = pet.snapshot().state;
+  function observeState(next) {
+    if (next === "idle" && lastObservedState !== "idle") armSleep();
+    lastObservedState = next;
+    return next;
+  }
   let skinOverride = null; // pet_skin 工具的会话级覆盖
 
   function skinDirs() {
@@ -70,14 +79,18 @@ export async function activate(api) {
   const petJs = fs.readFileSync(path.join(here, "pet", "renderer", "pet.js"), "utf8");
 
   const server = createPetServer({
-    getSnapshot: () => pet.tick(),
+    getSnapshot: () => {
+      const snap = pet.tick();
+      observeState(snap.state);
+      return snap;
+    },
     dispatch: (event, arg) => {
       if (event === "skin") {
         const skins = listSkins();
         if (skins.some((s) => s.id === arg)) skinOverride = String(arg);
-        return pet.snapshot().state;
+        return observeState(pet.snapshot().state);
       }
-      return pet.dispatch(event, arg);
+      return observeState(pet.dispatch(event, arg));
     },
     listSkins,
     skinFile: (id) => listSkins().find((s) => s.id === id)?.spritesheet ?? null,
@@ -151,7 +164,7 @@ export async function activate(api) {
       hidden: false
     },
     async (a) => {
-      const next = pet.dispatch("emote", a.emote);
+      const next = observeState(pet.dispatch("emote", a.emote));
       return { ok: true, state: next };
     }
   );
@@ -189,7 +202,7 @@ export async function activate(api) {
     },
     async () => {
       if (overlay && typeof overlay.hide === "function") { await overlay.hide(); return { ok: true, mode: "overlay" }; }
-      pet.dispatch("sleep");
+      observeState(pet.dispatch("sleep"));
       return { ok: true, mode: "browser", note: "浏览器降级模式：已让桌宠入睡，关闭浏览器标签页可彻底隐藏" };
     }
   );
@@ -255,7 +268,7 @@ export async function activate(api) {
     if (sleepTimer) clearTimeout(sleepTimer);
     const sec = Number(readConfig().idleSleepSec) || 0;
     if (sec <= 0) return;
-    sleepTimer = setTimeout(() => pet.dispatch("sleep"), sec * 1000);
+    sleepTimer = setTimeout(() => observeState(pet.dispatch("sleep")), sec * 1000);
     sleepTimer.unref?.();
   }
 
