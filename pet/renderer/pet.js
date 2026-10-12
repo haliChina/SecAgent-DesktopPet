@@ -40,7 +40,7 @@
     scale: 1,
     dragging: false,
     dragMoved: false,
-    downPos: null, downT: 0,
+    downScreen: null, downStartScreen: null, downT: 0,
     stagePos: null,
     blinkT: 0, blinkOn: false,
     captured: false,
@@ -328,42 +328,47 @@
   }
 
   // ---------- 交互 ----------
+  // 拖拽一律用 screenX/screenY（屏幕坐标系）计算增量：
+  // clientX 随窗口移动反向变化，移动窗口后同一物理鼠标的 client 坐标会「跳回」，
+  // 与 IPC 异步的 setBounds 叠加形成反馈振荡——实机表现为拖动时窗口抽搐。
   canvas.addEventListener("pointerdown", (e) => {
     S.dragging = true; S.dragMoved = false;
-    S.downPos = { x: e.clientX, y: e.clientY };
+    S.downScreen = { x: e.screenX, y: e.screenY };
+    S.downStartScreen = { x: e.screenX, y: e.screenY };
     S.downT = performance.now();
     postEvent("drag_start", 1);
     try { canvas.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (S.dragging && S.downPos) {
-      const dx = e.clientX - S.downPos.x, dy = e.clientY - S.downPos.y;
-      if (Math.hypot(dx, dy) > 6) S.dragMoved = true;
+    if (S.dragging && S.downScreen) {
+      const dx = e.screenX - S.downScreen.x, dy = e.screenY - S.downScreen.y;
+      if (!S.dragMoved && Math.hypot(e.screenX - (S.downStartScreen?.x ?? e.screenX), e.screenY - (S.downStartScreen?.y ?? e.screenY)) > 6) S.dragMoved = true;
       if (S.dragMoved) {
         // 方向本地立即生效（轮询 800ms 太慢，拖拽会看起来没动画）
         S.dragDir = dx < 0 ? -1 : 1;
         postEvent("drag_move", S.dragDir);
         if (hostBridge && hostBridge.move) {
           hostBridge.move(dx, dy);
-          S.downPos = { x: e.clientX, y: e.clientY };
         } else {
+          // 浏览器降级：窗口不动，移动页内 stage（screen 坐标同样不受影响）
           if (!S.stagePos) {
             const r = stage.getBoundingClientRect();
             S.stagePos = { right: innerWidth - r.right, bottom: innerHeight - r.bottom };
             stage.style.left = "auto"; stage.style.top = "auto";
           }
           S.stagePos.right = Math.max(-40, S.stagePos.right - dx);
-          S.stagePos.bottom = Math.max(-40, S.stagePos.bottom - dx);
+          S.stagePos.bottom = Math.max(-40, S.stagePos.bottom - dy);
           stage.style.right = S.stagePos.right + "px";
           stage.style.bottom = S.stagePos.bottom + "px";
-          S.downPos = { x: e.clientX, y: e.clientY };
         }
+        // 增量已消费，重置基准（screen 坐标在窗口移动后依然稳定）
+        S.downScreen = { x: e.screenX, y: e.screenY };
       }
     }
   });
   canvas.addEventListener("pointerup", (e) => {
     const wasDrag = S.dragMoved;
-    S.dragging = false; S.dragMoved = false; S.downPos = null;
+    S.dragging = false; S.dragMoved = false; S.downScreen = null; S.downStartScreen = null;
     postEvent("drag_end");
     if (!wasDrag && performance.now() - S.downT < 400) {
       postEvent("poke");
@@ -378,9 +383,13 @@
     e.preventDefault();
     buildMenu();
     menuEl.classList.add("show"); menubg.classList.add("show");
+    // 菜单打开期间必须保持接管：一旦交还穿透，菜单项/遮罩的 click 全部落到桌面，
+    // 菜单看得见点不着（0.4.0 实机）。关闭由 menubg/按钮的 click 处理。
+    setCapture(true);
   });
   menubg.addEventListener("click", () => {
     menuEl.classList.remove("show"); menubg.classList.remove("show");
+    // 不在这里交还穿透：指针若已不在角色像素上，下一次 mousemove 会自动释放。
   });
 
   // 追视 + 点击穿透接管：两件事共用同一次 mousemove。
@@ -389,7 +398,9 @@
   window.addEventListener("mousemove", (e) => {
     if (S.captured) {
       // 已接管：指针离开角色像素就交还穿透，避免挡住整块桌面。
-      if (!hitsPet(e.clientX, e.clientY) && !S.dragging) setCapture(false);
+      // 例外：菜单打开期间保持接管（见 contextmenu），否则菜单点不着。
+      const menuOpen = menuEl.classList.contains("show");
+      if (!hitsPet(e.clientX, e.clientY) && !S.dragging && !menuOpen) setCapture(false);
     } else if (hitsPet(e.clientX, e.clientY)) {
       setCapture(true);
     }
@@ -400,23 +411,29 @@
     const dist = Math.hypot(dx, dy);
     S.look = dist < 12 || dist > 900 ? null : { dx: dx / dist, dy: dy / dist };
   });
-  window.addEventListener("blur", () => { if (!S.dragging) setCapture(false); });
+  window.addEventListener("blur", () => {
+    // 失焦（用户点到别的应用）时连菜单一起收起：只释放穿透不关菜单的话，
+    // 菜单还挂着但点不着，又回到「看得见摸不着」的状态。
+    menuEl.classList.remove("show"); menubg.classList.remove("show");
+    if (!S.dragging) setCapture(false);
+  });
 
   function buildMenu() {
     menuEl.innerHTML = "";
+    // 注意：Electron 沙盒渲染进程里 window.prompt/alert 一律静默失败（返回 null），
+    // 菜单项不能用任何原生对话框——0.4.0 实机：「说句话/换皮肤」两项从未生效过。
     const items = [
-      ["说句话", () => { const t = prompt("让桌宠说什么？"); if (t) postEvent("say", t); }],
+      ["说句话", () => {
+        const lines = ["今天也要加油鸭~", "要不要摸摸头？", "我在陪你哦", "有什么想让我做的嘛？", "嘿嘿，被发现了~"];
+        say(lines[Math.floor(Math.random() * lines.length)], 5000);
+      }],
       ["换皮肤", () => {
-        if (!S.skins.length) { say("还没有皮肤，去 ~/.codex/pets 放一个吧"); return; }
-        const names = S.skins.map((s, i) => `${i + 1}. ${s.displayName}`).join("\n");
-        const c = prompt("选择皮肤编号：\n" + names);
-        const n = parseInt(c, 10);
-        if (n >= 1 && n <= S.skins.length) {
-          const skin = S.skins[n - 1];
-          postEvent("skin", skin.id);
-          loadSkin(skin);
-          say("换上" + skin.displayName + "啦~");
-        }
+        if (!S.skins.length) { say("还没有皮肤，先去放一个吧"); return; }
+        const idx = S.skins.indexOf(S.skin);
+        const skin = S.skins[(idx + 1) % S.skins.length];
+        postEvent("skin", skin.id);
+        loadSkin(skin);
+        say("换上" + skin.displayName + "啦~");
       }],
       ["睡觉/醒来", () => postEvent(S.state === "sleeping" ? "wake" : "sleep")],
       ["隐藏桌宠", () => { stage.style.display = "none"; say(""); setTimeout(() => { stage.style.display = ""; }, 60000); }]
