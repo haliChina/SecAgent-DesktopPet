@@ -40,7 +40,9 @@
     scale: 1,
     dragging: false,
     dragMoved: false,
+    grabOffset: null,
     downScreen: null, downStartScreen: null, downT: 0,
+    appliedSize: 0,
     stagePos: null,
     blinkT: 0, blinkOn: false,
     captured: false,
@@ -70,6 +72,26 @@
     return S.skins.find((s) => s.id === want) || S.skins[0] || null;
   }
 
+  /**
+   * 从图集实际尺寸推导网格版式。
+   * 标准契约：8 列 × (9|11) 行、标准格 192×208。社区皮肤常见 2× 等整倍放大图集
+   * （0.4.1 实机：用户被迫在线压缩到标准尺寸才能换肤）。只要几何对得上——
+   * 宽是 8 的倍数、高是行数的倍数、格子纵横比 ≈ 192/208——任意倍率都接受，
+   * drawSprite/frameBBox 全部按 layout.cellW/cellH 取源格并缩放到 192×208 绘制。
+   * @returns {object|null} 推导出的 layout，几何不吻合返回 null。
+   */
+  function deriveAtlasLayout(w, h) {
+    if (!(w > 0) || !(h > 0) || w % 8 !== 0) return null;
+    const cw = w / 8;
+    for (const rows of [11, 9]) {
+      if (h % rows !== 0) continue;
+      const ch = h / rows;
+      if (Math.abs(cw / ch - CELL_W / CELL_H) > 0.03) continue;
+      return { cols: 8, rows, cellW: cw, cellH: ch, lookRows: rows === 11 ? 2 : 0, version: rows === 11 ? 2 : 1 };
+    }
+    return null;
+  }
+
   function loadSkin(skin) {
     S.skin = skin; S.skinOk = false; S.skinImg = null;
     bboxCache.clear();
@@ -77,13 +99,16 @@
     const img = new Image();
     img.onload = () => {
       // 以实际尺寸复核版式：声明与图集不符时按图集纠正，仍不符则拒绝播放（画出来只会是错位网格）。
+      // 优先级：pet.json 显式 layout 且与实际尺寸吻合 > 按几何推导（标准及任意倍率）> 默认版式（将判失败）。
       const l = skin.layout || {};
-      if (img.naturalWidth === CELL_W * 8 && img.naturalHeight === CELL_H * 9) {
-        skin.layout = { cols: 8, rows: 9, cellW: CELL_W, cellH: CELL_H, lookRows: 0, version: 1 };
-      } else if (img.naturalWidth === CELL_W * 8 && img.naturalHeight === CELL_H * 11) {
-        skin.layout = { cols: 8, rows: 11, cellW: CELL_W, cellH: CELL_H, lookRows: 2, version: 2 };
+      const petJsonValid = !!(l.cols && l.rows && l.cellW && l.cellH
+        && img.naturalWidth === l.cols * l.cellW && img.naturalHeight === l.rows * l.cellH);
+      if (petJsonValid) {
+        skin.layout = { ...l, lookRows: l.lookRows ?? 0, version: l.version ?? "custom" };
       } else {
-        skin.layout = { ...l, cols: 8, rows: 11, cellW: CELL_W, cellH: CELL_H, lookRows: 0, version: "custom" };
+        const derived = deriveAtlasLayout(img.naturalWidth, img.naturalHeight);
+        if (derived) skin.layout = derived;
+        else skin.layout = { cols: 8, rows: 11, cellW: CELL_W, cellH: CELL_H, lookRows: 0, version: "custom" };
       }
       const ok = (img.naturalWidth === skin.layout.cols * skin.layout.cellW)
         && (img.naturalHeight === skin.layout.rows * skin.layout.cellH);
@@ -113,7 +138,8 @@
   function currentSpec() {
     const layout = S.skin && S.skin.layout;
     // 拖拽是运动层，优先于一切动画状态；方向决定用 running-right / running-left 行。
-    if (S.dragging && layout) {
+    // 0.4.2：加 dragMoved 门控——长按不动不该播放跑步动画。
+    if (S.dragging && S.dragMoved && layout) {
       const id = (S.dragDir ?? 1) < 0 ? "running-left" : "running-right";
       const def = F.states[id];
       if (def) return { row: def.row, columns: 8, frames: def.frames, frameDurationsMs: def.frameDurationsMs };
@@ -328,42 +354,52 @@
   }
 
   // ---------- 交互 ----------
-  // 拖拽一律用 screenX/screenY（屏幕坐标系）计算增量：
-  // clientX 随窗口移动反向变化，移动窗口后同一物理鼠标的 client 坐标会「跳回」，
-  // 与 IPC 异步的 setBounds 叠加形成反馈振荡——实机表现为拖动时窗口抽搐。
+  // 拖拽协议（0.4.2 重写，实机：0.4.1 往左上拖反而往左下慢速漂移）：
+  // - 有宿主桥时优先「绝对定位」：每次 move 只上报抓取点在窗口内的偏移（拖拽期间
+  //   恒定），宿主用主进程自己的光标坐标反推窗口原点——无跨进程增量换算，DPI
+  //   缩放/坐标系差异不可能造成反向或漂移，且每帧自纠错。
+  // - 旧宿主无 moveTo 时退回增量协议（screen 坐标系，比 client 稳但 DPI 不一致仍可能漂移）。
+  // - 浏览器降级：窗口不动，移动页内 stage。
+  // 另：跑步动画与 drag_start 事件都延迟到「真实移动 >6px」才触发——长按不动
+  // 不该进跑步态（0.4.1 实机反馈）。
   canvas.addEventListener("pointerdown", (e) => {
     S.dragging = true; S.dragMoved = false;
+    S.grabOffset = { x: e.clientX, y: e.clientY };
     S.downScreen = { x: e.screenX, y: e.screenY };
     S.downStartScreen = { x: e.screenX, y: e.screenY };
     S.downT = performance.now();
-    postEvent("drag_start", 1);
     try { canvas.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (S.dragging && S.downScreen) {
+    if (!S.dragging || !S.downStartScreen) return;
+    const totalDx = e.screenX - S.downStartScreen.x;
+    const totalDy = e.screenY - S.downStartScreen.y;
+    if (!S.dragMoved && Math.hypot(totalDx, totalDy) > 6) {
+      S.dragMoved = true;
+      postEvent("drag_start", 1);
+    }
+    if (!S.dragMoved) return;
+    // 方向按总位移判定（逐事件增量会因抖动来回翻转）
+    S.dragDir = totalDx < 0 ? -1 : 1;
+    postEvent("drag_move", S.dragDir);
+    if (hostBridge && hostBridge.moveTo) {
+      hostBridge.moveTo(S.grabOffset.x, S.grabOffset.y);
+    } else if (hostBridge && hostBridge.move) {
+      hostBridge.move(e.screenX - S.downScreen.x, e.screenY - S.downScreen.y);
+      S.downScreen = { x: e.screenX, y: e.screenY };
+    } else {
+      // 浏览器降级：移动页内 stage
       const dx = e.screenX - S.downScreen.x, dy = e.screenY - S.downScreen.y;
-      if (!S.dragMoved && Math.hypot(e.screenX - (S.downStartScreen?.x ?? e.screenX), e.screenY - (S.downStartScreen?.y ?? e.screenY)) > 6) S.dragMoved = true;
-      if (S.dragMoved) {
-        // 方向本地立即生效（轮询 800ms 太慢，拖拽会看起来没动画）
-        S.dragDir = dx < 0 ? -1 : 1;
-        postEvent("drag_move", S.dragDir);
-        if (hostBridge && hostBridge.move) {
-          hostBridge.move(dx, dy);
-        } else {
-          // 浏览器降级：窗口不动，移动页内 stage（screen 坐标同样不受影响）
-          if (!S.stagePos) {
-            const r = stage.getBoundingClientRect();
-            S.stagePos = { right: innerWidth - r.right, bottom: innerHeight - r.bottom };
-            stage.style.left = "auto"; stage.style.top = "auto";
-          }
-          S.stagePos.right = Math.max(-40, S.stagePos.right - dx);
-          S.stagePos.bottom = Math.max(-40, S.stagePos.bottom - dy);
-          stage.style.right = S.stagePos.right + "px";
-          stage.style.bottom = S.stagePos.bottom + "px";
-        }
-        // 增量已消费，重置基准（screen 坐标在窗口移动后依然稳定）
-        S.downScreen = { x: e.screenX, y: e.screenY };
+      if (!S.stagePos) {
+        const r = stage.getBoundingClientRect();
+        S.stagePos = { right: innerWidth - r.right, bottom: innerHeight - r.bottom };
+        stage.style.left = "auto"; stage.style.top = "auto";
       }
+      S.stagePos.right = Math.max(-40, S.stagePos.right - dx);
+      S.stagePos.bottom = Math.max(-40, S.stagePos.bottom - dy);
+      stage.style.right = S.stagePos.right + "px";
+      stage.style.bottom = S.stagePos.bottom + "px";
+      S.downScreen = { x: e.screenX, y: e.screenY };
     }
   });
   canvas.addEventListener("pointerup", (e) => {
@@ -452,6 +488,7 @@
       const r = await api("/api/state");
       const data = await r.json();
       S.config = { ...S.config, ...(data.config || {}) };
+      S.appliedSize = Number(S.config.size) || 0;
       S.state = data.snapshot?.state || "idle";
       const sr = await api("/api/skins");
       const sd = await sr.json();
@@ -470,6 +507,14 @@
         const r = await api("/api/state");
         const data = await r.json();
         const snap = data.snapshot || {};
+        // 配置热更新：pet_config 改了 size / 气泡时长等，overlay 已在跑也要立刻生效，
+        // 不能等重启（0.4.1 实机：改大小要重启整个客户端才应用）。
+        S.config = { ...S.config, ...(data.config || {}) };
+        const wantSize = Number(S.config.size) || 0;
+        if (wantSize && wantSize !== S.appliedSize) {
+          S.appliedSize = wantSize;
+          fitCanvas();
+        }
         // 皮肤切换要热生效：agent 调 pet_skin / 用户从菜单换皮肤后，overlay 已经在跑，
         // 不能等到下次打开页面才换。
         const wantSkin = (data.config || {}).activeSkinId || null;
