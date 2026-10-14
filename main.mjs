@@ -102,14 +102,21 @@ export async function activate(api) {
   const petUrl = await server.start();
 
   // —— 展示层：优先宿主 overlay（见 docs/OVERLAY_API.md），否则降级用系统浏览器 ——
+  // 窗口尺寸跟随桌宠大小：画布显示宽 = size，高 = size×208/192，
+  // 加上 stage 边距（右/下各 24）与气泡头部空间。尺寸变化时 pet_config 会即时 setBounds，
+  // 否则变大被窗口裁剪、变小也不回收（0.4.1 实机：改大小要重启客户端才生效）。
+  const overlaySizeFor = (cfgSize) => {
+    const size = Math.round(Number(cfgSize) || 160);
+    const displayH = Math.ceil((size * 208) / 192);
+    return { width: Math.max(260, size + 48), height: Math.max(300, displayH + 110) };
+  };
   let overlay = null;
   let overlayMode = "browser";
   if (typeof api.createOverlay === "function") {
     try {
       overlay = await api.createOverlay({
         url: petUrl,
-        width: 260,
-        height: 300,
+        ...overlaySizeFor(readConfig().size),
         transparent: true,
         alwaysOnTop: true,
         clickThrough: true
@@ -281,6 +288,14 @@ export async function activate(api) {
       const next = { ...raw, [key]: a.value };
       const { config, dropped } = mergeConfig(next);
       api.setConfig(next);
+      // size 热生效：overlay 窗口跟着调整（渲染页自身由轮询热更 fitCanvas）。
+      // anchor=bottom-right：窗口右下角不动，桌宠原地缩放（新宿主支持；旧宿主忽略该字段）。
+      if (key === "size" && overlay && typeof overlay.setBounds === "function") {
+        try {
+          const { width, height } = overlaySizeFor(config.size);
+          await overlay.setBounds({ width, height, anchor: "bottom-right" });
+        } catch { /* 扩窗失败不阻塞设置写入，渲染页仍会热更画布 */ }
+      }
       return {
         ok: true, key, value: config[key],
         ...(dropped.length ? { note: `以下键已按取值范围修正：${dropped.join(", ")}` } : {})
