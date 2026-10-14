@@ -44,9 +44,15 @@ interface OverlayHandle {
 ```js
 window.__petHost = {
   setIgnoreMouseEvents(ignore: boolean): void,  // 点击穿透开关
-  move(dx: number, dy: number): void,           // 拖拽移动窗口
+  move(dx: number, dy: number): void,           // 拖拽移动窗口（旧协议，增量；DPI 缩放下可能漂移，仅兜底）
+  moveTo(offsetX: number, offsetY: number): void // 拖拽绝对定位（0.4.2+）：传抓取点在窗口内的
+                                                  // 偏移（拖拽期间恒定），宿主用主进程光标坐标
+                                                  // 反推窗口原点，无跨进程增量换算、每帧自纠错
 };
 ```
+
+`setBounds` 支持 `anchor`：`{ width, height, anchor: "bottom-right" }` 只改宽高时保持
+窗口右下角不动（桌宠锚定右下角，改尺寸时原地缩放；旧宿主忽略该字段，退化为左上角锚定）。
 
 ## 插件侧兼容写法（本插件已采用）
 

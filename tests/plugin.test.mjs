@@ -88,6 +88,33 @@ test("pet_say / pet_emote / pet_skin 工具可用", async () => {
   }
 });
 
+test("pet_config 改 size 即时调整 overlay 窗口（0.4.1 实机：改大小要重启客户端才生效）", async () => {
+  const api = fakeApi();
+  const boundsCalls = [];
+  api.createOverlay = async () => ({
+    show: async () => {},
+    hide: async () => {},
+    close: async () => {},
+    setBounds: async (b) => { boundsCalls.push(b); }
+  });
+  const dispose = await activate(api);
+  try {
+    const byName = Object.fromEntries(api.tools.map((t) => [t.name, t.fn]));
+    const out = await byName.pet_config({ action: "set", key: "size", value: 280 });
+    assert.equal(out.ok, true);
+    // 窗口立即跟着扩：280 → 宽 max(260, 280+48)=328；高 max(300, ⌈280×208/192⌉+110)=414
+    assert.equal(boundsCalls.length, 1, "size 变化应触发一次 setBounds");
+    assert.equal(boundsCalls[0].width, 328);
+    assert.equal(boundsCalls[0].height, 414);
+    assert.equal(boundsCalls[0].anchor, "bottom-right", "锚定右下角，桌宠原地缩放");
+    // 改别的键不动窗口
+    await byName.pet_config({ action: "set", key: "petEnabled", value: true });
+    assert.equal(boundsCalls.length, 1);
+  } finally {
+    await dispose();
+  }
+});
+
 test("petEnabled=false 时 prompt 为空", async () => {
   const api = fakeApi();
   api.config = { petEnabled: false };

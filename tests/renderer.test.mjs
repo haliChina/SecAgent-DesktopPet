@@ -1,5 +1,6 @@
 // 渲染层 pet.js 的源码契约测试（无 DOM 基建，以关键模式断言防回归）。
 // 每条断言都对应一次实机踩坑，改回去就是事故重演。
+// deriveAtlasLayout 从源码提取后用 new Function 实跑——比字符串断言强一档。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -11,23 +12,42 @@ const petJs = fs.readFileSync(
   "utf8"
 );
 
-test("拖拽用 screen 坐标系（0.4.0 实机：client 坐标反馈振荡导致窗口抽搐）", () => {
-  // 增量必须来自 screenX/screenY：窗口移动不影响屏幕坐标，
-  // clientX 会随窗口移动反向「跳回」，与异步 setBounds 叠加即抽搐。
-  assert.match(petJs, /S\.downScreen = \{ x: e\.screenX, y: e\.screenY \}/);
-  assert.match(petJs, /const dx = e\.screenX - S\.downScreen\.x, dy = e\.screenY - S\.downScreen\.y/);
-  // 旧的 client 增量模式（消费后重置 downPos 为 client 坐标）必须不复存在
-  assert.doesNotMatch(petJs, /S\.downPos = \{ x: e\.clientX/);
+/** 从源码提取顶层具名函数（按大括号配对），注入常量后返回可调用副本。 */
+function extractFunction(name, consts) {
+  const start = petJs.indexOf(`function ${name}(`);
+  assert.ok(start > 0, `源码中未找到 ${name}`);
+  let depth = 0, end = -1;
+  for (let i = petJs.indexOf("{", start); i < petJs.length; i += 1) {
+    if (petJs[i] === "{") depth += 1;
+    else if (petJs[i] === "}") { depth -= 1; if (depth === 0) { end = i + 1; break; } }
+  }
+  assert.ok(end > 0, `${name} 的大括号不配对`);
+  const src = petJs.slice(start, end);
+  return new Function(...Object.keys(consts), `${src}; return ${name};`)(...Object.values(consts));
+}
+
+test("拖拽优先绝对定位协议（0.4.1 实机：增量换算在 DPI 缩放下反向/棘轮漂移）", () => {
+  // pointerdown 记录抓取点偏移（窗口内坐标，拖拽期间恒定）
+  assert.match(petJs, /S\.grabOffset = \{ x: e\.clientX, y: e\.clientY \}/);
+  // pointermove 优先 moveTo（绝对定位），旧宿主退回 move（增量），浏览器降级走 stage
+  const moveBranch = petJs.match(/if \(hostBridge && hostBridge\.moveTo\) \{[\s\S]{0,200}hostBridge\.moveTo\(S\.grabOffset\.x, S\.grabOffset\.y\)/);
+  assert.ok(moveBranch, "缺少 moveTo 绝对定位调用");
+  assert.match(petJs, /\} else if \(hostBridge && hostBridge\.move\) \{/);
+  // 方向按总位移判定（相对 downStartScreen），不是逐事件增量
+  assert.match(petJs, /const totalDx = e\.screenX - S\.downStartScreen\.x/);
 });
 
-test("降级模式垂直拖动用 dy（0.4.0 笔误：bottom 误用 dx，垂直拖不动）", () => {
-  assert.match(petJs, /S\.stagePos\.bottom = Math\.max\(-40, S\.stagePos\.bottom - dy\)/);
+test("drag_start 延迟到真实移动（0.4.1 实机：长按不动也进跑步态）", () => {
+  const down = petJs.match(/canvas\.addEventListener\("pointerdown"[\s\S]{0,700}?\}\);/)?.[0] ?? "";
+  assert.ok(down, "未找到 pointerdown 处理器");
+  assert.doesNotMatch(down, /postEvent\("drag_start"/, "pointerdown 不应立即发 drag_start");
+  assert.match(petJs, /S\.dragMoved = true;\s*\n\s*postEvent\("drag_start", 1\)/, "drag_start 应在首次移动 >6px 时发");
+  // 跑步动画行选择也须有 dragMoved 门控
+  assert.match(petJs, /if \(S\.dragging && S\.dragMoved && layout\)/);
 });
 
 test("右键菜单打开期间保持接管（0.4.0 实机：鼠标移向菜单即释放穿透，菜单点不着）", () => {
-  // contextmenu 打开时主动接管
   assert.match(petJs, /menuEl\.classList\.add\("show"\); menubg\.classList\.add\("show"\);[\s\S]{0,200}setCapture\(true\)/);
-  // mousemove 的释放条件包含 menuOpen 保护
   assert.match(petJs, /!hitsPet\(e\.clientX, e\.clientY\) && !S\.dragging && !menuOpen/);
 });
 
@@ -44,4 +64,35 @@ test("菜单项不使用原生对话框（Electron 沙盒渲染进程里 prompt 
 
 test("换皮肤为循环切换（旧实现依赖 prompt 输入编号，从未生效过）", () => {
   assert.match(petJs, /S\.skins\[\(idx \+ 1\) % S\.skins\.length\]/);
+});
+
+test("deriveAtlasLayout：标准与任意倍率图集都能推导，几何不吻合返回 null（0.4.1 实机：用户被迫在线压缩超大皮肤）", () => {
+  const derive = extractFunction("deriveAtlasLayout", { CELL_W: 192, CELL_H: 208 });
+  // 标准 v1 / v2
+  assert.deepEqual(derive(1536, 1872), { cols: 8, rows: 9, cellW: 192, cellH: 208, lookRows: 0, version: 1 });
+  assert.deepEqual(derive(1536, 2288), { cols: 8, rows: 11, cellW: 192, cellH: 208, lookRows: 2, version: 2 });
+  // 2× 放大图集（实机场景）
+  assert.deepEqual(derive(3072, 3744), { cols: 8, rows: 9, cellW: 384, cellH: 416, lookRows: 0, version: 1 });
+  assert.deepEqual(derive(3072, 4576), { cols: 8, rows: 11, cellW: 384, cellH: 416, lookRows: 2, version: 2 });
+  // 0.5× 缩小图集
+  assert.equal(derive(768, 936).cellW, 96);
+  // 非 8 列倍数 / 高度不整除 / 纵横比跑偏 → null
+  assert.equal(derive(2000, 3000), null);
+  assert.equal(derive(1536, 1873), null);
+  assert.equal(derive(1600, 2079), null); // 行数整除但格子比例失真（200/231 ≠ 192/208）
+  assert.equal(derive(0, 0), null);
+  assert.equal(derive(-8, -9), null);
+});
+
+test("loadSkin 尺寸复核优先级：pet.json 有效 layout > 几何推导 > 默认（判失败）", () => {
+  assert.match(petJs, /const petJsonValid = !!\(l\.cols && l\.rows && l\.cellW && l\.cellH/);
+  assert.match(petJs, /const derived = deriveAtlasLayout\(img\.naturalWidth, img\.naturalHeight\)/);
+});
+
+test("尺寸热更新：轮询检测 size 变化即 fitCanvas（0.4.1 实机：改大小要重启客户端）", () => {
+  assert.match(petJs, /S\.appliedSize = Number\(S\.config\.size\) \|\| 0/);
+  assert.match(petJs, /const wantSize = Number\(S\.config\.size\) \|\| 0/);
+  assert.match(petJs, /if \(wantSize && wantSize !== S\.appliedSize\) \{[\s\S]{0,150}fitCanvas\(\)/);
+  // 轮询必须合并 config（气泡时长等同样热更）
+  assert.match(petJs, /S\.config = \{ \.\.\.S\.config, \.\.\.\(data\.config \|\| \{\}\) \};/);
 });
