@@ -48,13 +48,14 @@ function readBody(req) {
  * @param {() => object} options.getConfig
  * @param {string} options.pageHtml 渲染页 HTML
  * @param {string} options.petJs 渲染脚本
+ * @param {string} [options.physicsJs] 抛掷物理模块（已浏览器化：无 export，附着 window.__petPhysics）
  * @param {(url:string)=>void} [options.openBrowser]
  * @param {(msg:string)=>void} [options.log]
  */
 export function createPetServer(options) {
   const {
     getSnapshot, dispatch, listSkins, skinFile, getConfig,
-    pageHtml, petJs, log = () => {}
+    pageHtml, petJs, physicsJs = "", log = () => {}
   } = options;
   const openBrowser = options.openBrowser || defaultOpenBrowser;
 
@@ -89,7 +90,11 @@ export function createPetServer(options) {
     if (pathname === "/pet.js") {
       if (!checkToken(url)) { res.writeHead(401); res.end("unauthorized"); return; }
       // 契约表由 pet/skins.mjs 单一事实源注入，渲染页不重复抄一份状态表。
-      const prelude = `window.__PET_FORMAT=${JSON.stringify(options.format ?? {})};\n`;
+      // physicsJs（浏览器化后的抛掷物理，MIT 致谢见 THIRD_PARTY_NOTICES.md）
+      // 在 pet.js 之前注入，渲染页经 window.__petPhysics 引用。
+      const prelude =
+        `window.__PET_FORMAT=${JSON.stringify(options.format ?? {})};\n` +
+        (physicsJs ? physicsJs + "\n" : "");
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       res.end(prelude + petJs);
       return;

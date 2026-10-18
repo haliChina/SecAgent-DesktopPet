@@ -126,3 +126,29 @@ test("petEnabled=false 时 prompt 为空", async () => {
     await dispose();
   }
 });
+
+test("pet.js 响应端到端：__PET_FORMAT 与 __petPhysics 注入且整段语法合法（0.5.0）", async () => {
+  const api = fakeApi();
+  const dispose = await activate(api);
+  try {
+    // 借 pet_show 拿服务 URL（无 overlay 时返回浏览器降级地址）。
+    // 注意用 Node 原生 fetch 直连本地 server——api.fetch 是测试桩。
+    const byName = Object.fromEntries(api.tools.map((t) => [t.name, t.fn]));
+    const shown = await byName.pet_show({});
+    const base = new URL(shown.url);
+    const token = base.searchParams.get("token");
+    const res = await fetch(`http://127.0.0.1:${base.port}/pet.js?token=${token}`);
+    assert.equal(res.ok, true);
+    const body = await res.text();
+    // 契约表与物理模块都在 prelude 里，且在 pet.js 主体之前
+    assert.ok(body.startsWith("window.__PET_FORMAT="), "prelude 应在最前");
+    const physIdx = body.indexOf("window.__petPhysics = {");
+    const petIdx = body.indexOf("const TOKEN");
+    assert.ok(physIdx > 0 && physIdx < petIdx, "物理模块应在 pet.js 主体之前");
+    assert.match(body, /estimateReleaseVelocity, normalizeThrowStrength/);
+    // 整段能作为普通 <script> 解析（等价浏览器加载，语法非法会在此抛错）
+    new Function(body);
+  } finally {
+    await dispose();
+  }
+});

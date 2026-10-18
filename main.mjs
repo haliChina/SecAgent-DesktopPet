@@ -78,7 +78,19 @@ export async function activate(api) {
   const pageHtml = fs.readFileSync(path.join(here, "pet", "renderer", "index.html"), "utf8");
   const petJs = fs.readFileSync(path.join(here, "pet", "renderer", "pet.js"), "utf8");
 
+  // 抛掷物理（移植自 dsh-pet-indesktop，MIT，见 THIRD_PARTY_NOTICES.md）：
+  // ES module 源文件供 node:test 直测；剥掉 export 关键字后作为浏览器脚本
+  // 注入 pet.js 响应，并附着到 window.__petPhysics。
+  const physicsSrc = fs.readFileSync(path.join(here, "pet", "renderer", "physics.js"), "utf8");
+  const physicsBrowser = physicsSrc
+    .replace(/^export const /gm, "const ")
+    .replace(/^export function /gm, "function ")
+    + "\nwindow.__petPhysics = { TRAIL_KEEP_SEC, RELEASE_WINDOW_SEC, DEAD_ZONE_SPEED, MAX_THROW_SPEED," +
+    " THROW_STRENGTH_CAPS, estimateReleaseVelocity, normalizeThrowStrength, throwSpeedCap," +
+    " softClampSpeed, flightAnimSpeed, throwStep, isAtRest };\n";
+
   const server = createPetServer({
+    physicsJs: physicsBrowser,
     getSnapshot: () => {
       const snap = pet.tick();
       observeState(snap.state);

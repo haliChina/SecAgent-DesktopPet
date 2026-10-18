@@ -28,7 +28,18 @@ export const SETTING_FIELDS = [
   { key: "bubbleDurationMs", group: "behavior", type: "number", default: 4000, min: 1000, max: 15000, step: 500,
     label: "气泡停留（毫秒）", effect: "immediate" },
   { key: "idleSleepSec", group: "behavior", type: "number", default: 600, min: 60, max: 3600, step: 60,
-    label: "无互动后入睡（秒）", hint: "0 表示不睡。", effect: "immediate" }
+    label: "无互动后入睡（秒）", hint: "0 表示不睡。", effect: "immediate" },
+  { key: "throwPhysics", group: "behavior", type: "boolean", default: true,
+    label: "甩出物理（抛掷）",
+    hint: "快速甩动松手后桌宠会飞出去、受重力落地弹跳。移植自 dsh-pet-indesktop（MIT）。", effect: "immediate" },
+  { key: "throwStrength", group: "behavior", type: "select", default: "standard",
+    options: [
+      { value: "gentle", label: "轻抛（上限 3600 px/s）" },
+      { value: "standard", label: "标准（上限 4800 px/s）" },
+      { value: "strong", label: "大力（上限 7200 px/s）" },
+      { value: "crazy", label: "疯狂（上限 9000 px/s）" }
+    ],
+    label: "甩出力度", effect: "immediate" }
 ];
 
 export const DEFAULT_CONFIG = Object.freeze(

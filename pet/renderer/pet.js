@@ -44,11 +44,15 @@
     downScreen: null, downStartScreen: null, downT: 0,
     appliedSize: 0,
     stagePos: null,
+    trail: [],       // 拖拽轨迹 [t, screenX, screenY]，供松手初速估算
+    flight: null,    // 抛掷飞行态 { px, py, vx, vy, lastT, bounced, written, browser }
     blinkT: 0, blinkOn: false,
     captured: false,
     pokeLines: ["欸？", "怎么啦？", "在呢在呢~", "戳我干嘛呀", "嘿嘿"],
     patLines: ["好舒服~", "再摸摸嘛", "开心！"]
   };
+  // 抛掷物理（window.__petPhysics 由服务端在 pet.js 之前注入；缺失时禁用）
+  const PHYS = window.__petPhysics || null;
 
   function say(text, ms) {
     if (!text) { bubbleEl.classList.remove("show"); return; }
@@ -137,10 +141,13 @@
   /** 返回 { row, columns, frames, frameDurationsMs }；注视态是单帧定格。 */
   function currentSpec() {
     const layout = S.skin && S.skin.layout;
-    // 拖拽是运动层，优先于一切动画状态；方向决定用 running-right / running-left 行。
+    // 拖拽/甩出是运动层，优先于一切动画状态；方向决定用 running-right / running-left 行。
     // 0.4.2：加 dragMoved 门控——长按不动不该播放跑步动画。
-    if (S.dragging && S.dragMoved && layout) {
-      const id = (S.dragDir ?? 1) < 0 ? "running-left" : "running-right";
+    // 0.5.0：甩出飞行（throwPhysics）也走跑步行，方向按飞行水平速度。
+    const inMotion = (S.dragging && S.dragMoved) || !!S.flight;
+    if (inMotion && layout) {
+      const dir = S.flight ? (S.flight.vx < 0 ? -1 : 1) : (S.dragDir ?? 1);
+      const id = dir < 0 ? "running-left" : "running-right";
       const def = F.states[id];
       if (def) return { row: def.row, columns: 8, frames: def.frames, frameDurationsMs: def.frameDurationsMs };
     }
@@ -169,7 +176,9 @@
     }
     if (spec.look || spec.frames <= 1) { S.frame = 0; return; }
     const dt = Math.min(S.lastT ? t - S.lastT : 0, 1000); // 后台标签页回来不要一次跳几十帧
-    S.frameElapsed += dt;
+    // 飞行期动画随速度加速（dsh-pet F4 语义：倍率口径唯一来源 = physics.flightAnimSpeed）
+    const rate = (S.flight && PHYS) ? PHYS.flightAnimSpeed(Math.hypot(S.flight.vx, S.flight.vy)) : 1;
+    S.frameElapsed += dt * rate;
     let guard = 0;
     while (S.frameElapsed >= spec.frameDurationsMs[S.frame] && guard++ < 30) {
       S.frameElapsed -= spec.frameDurationsMs[S.frame];
@@ -345,7 +354,70 @@
   // ---------- 宿主桥接：优先新版 __secagentOverlay，兼容旧名 __petHost ----------
   const hostBridge = window.__secagentOverlay || window.__petHost || null;
 
+  // ---------- 甩出物理（移植自 dsh-pet-indesktop，MIT，见 THIRD_PARTY_NOTICES.md） ----------
+  /** 松手起飞：记录窗口（或降级 stage）的初始位置与速度，进入飞行态。 */
+  function startFlight(vx, vy) {
+    const now = performance.now() / 1000;
+    if (hostBridge) {
+      // 屏幕工作区边界（当前屏；availLeft/Top 缺失时按主屏近似）。
+      // 窗口底贴屏底时桌宠脚距屏底 24px——与其待机在右下角时一致。
+      const left = screen.availLeft ?? 0;
+      const top = screen.availTop ?? 0;
+      const right = left + (screen.availWidth || screen.width);
+      const bottom = top + (screen.availHeight || screen.height);
+      const px = window.screenX, py = window.screenY;
+      S.flight = { px, py, vx, vy, lastT: now, bounced: false, written: [px, py], browser: false, bounds: [left, top, right, bottom] };
+    } else {
+      // 浏览器降级：stage 从 right/bottom 定位切换为 left/top
+      const r = stage.getBoundingClientRect();
+      stage.style.right = "auto"; stage.style.bottom = "auto";
+      stage.style.left = r.left + "px"; stage.style.top = r.top + "px";
+      S.stagePos = null;
+      S.flight = { px: r.left, py: r.top, vx, vy, lastT: now, bounced: false, written: null, browser: true, bounds: [0, 0, innerWidth, innerHeight] };
+    }
+  }
+
+  /** 每帧步进：≤8ms 子步积分（对齐 dsh-pet 语义），静止即收尾。 */
+  function stepFlight(tSec) {
+    const f = S.flight;
+    if (!f || !PHYS) return;
+    if (f.lastT == null) { f.lastT = tSec; return; } // 暂停恢复后的首帧只校时
+    const dt = Math.min(tSec - f.lastT, 0.032); // 后台标签回来不一次跳几十帧
+    f.lastT = tSec;
+    if (dt > 0) {
+      const sub = Math.max(1, Math.ceil(dt / 0.008));
+      const h = dt / sub;
+      for (let i = 0; i < sub; i += 1) {
+        const r = PHYS.throwStep(f.px, f.py, f.vx, f.vy, h, f.bounds[0], f.bounds[1], f.bounds[2], f.bounds[3]);
+        f.px = r[0]; f.py = r[1]; f.vx = r[2]; f.vy = r[3];
+        f.bounced = f.bounced || r[4];
+      }
+    }
+    writeFlightPos(f);
+    if (PHYS.isAtRest(f.py, f.vx, f.vy, f.bounds[3], f.bounced, Math.hypot(f.vx, f.vy))) {
+      S.flight = null;
+      if (Math.random() < 0.5) {
+        const lines = ["哎哟！", "好晕…", "落地啦~", "呼——"];
+        say(lines[Math.floor(Math.random() * lines.length)]);
+      }
+    }
+  }
+
+  /** 写位置：新宿主 setPosition（绝对）；旧宿主 move（差分）；浏览器 stage。 */
+  function writeFlightPos(f) {
+    const x = Math.round(f.px), y = Math.round(f.py);
+    if (f.browser) {
+      stage.style.left = x + "px";
+      stage.style.top = y + "px";
+      return;
+    }
+    if (hostBridge.setPosition) hostBridge.setPosition(x, y);
+    else if (hostBridge.move && f.written) hostBridge.move(x - f.written[0], y - f.written[1]);
+    f.written = [x, y];
+  }
+
   function frame(t) {
+    stepFlight(t / 1000);
     advance(t);
     S.lastT = t;
     if (S.skinOk && S.atlasOk) { drawSprite(); canvas.classList.toggle("sleeping", S.state === "sleeping"); }
@@ -367,6 +439,7 @@
     S.grabOffset = { x: e.clientX, y: e.clientY };
     S.downScreen = { x: e.screenX, y: e.screenY };
     S.downStartScreen = { x: e.screenX, y: e.screenY };
+    S.trail = [[performance.now() / 1000, e.screenX, e.screenY]];
     S.downT = performance.now();
     try { canvas.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
   });
@@ -379,6 +452,12 @@
       postEvent("drag_start", 1);
     }
     if (!S.dragMoved) return;
+    // 轨迹采样：只保留 TRAIL_KEEP_SEC 窗口（供松手初速估算，见 physics.js）
+    if (PHYS) {
+      const t = performance.now() / 1000;
+      S.trail.push([t, e.screenX, e.screenY]);
+      while (S.trail.length > 2 && S.trail[0][0] < t - PHYS.TRAIL_KEEP_SEC) S.trail.shift();
+    }
     // 方向按总位移判定（逐事件增量会因抖动来回翻转）
     S.dragDir = totalDx < 0 ? -1 : 1;
     postEvent("drag_move", S.dragDir);
@@ -406,6 +485,13 @@
     const wasDrag = S.dragMoved;
     S.dragging = false; S.dragMoved = false; S.downScreen = null; S.downStartScreen = null;
     postEvent("drag_end");
+    // 甩出判定：末段速度过死区即起飞（物理移植自 dsh-pet-indesktop，MIT）
+    if (wasDrag && PHYS && S.config.throwPhysics) {
+      const cap = PHYS.throwSpeedCap(S.config.throwStrength);
+      const [vx, vy] = PHYS.estimateReleaseVelocity(S.trail, performance.now() / 1000, cap);
+      if (Math.hypot(vx, vy) >= PHYS.DEAD_ZONE_SPEED) startFlight(vx, vy);
+    }
+    S.trail = [];
     if (!wasDrag && performance.now() - S.downT < 400) {
       postEvent("poke");
       if (Math.random() < 0.6) say(S.pokeLines[Math.floor(Math.random() * S.pokeLines.length)]);
@@ -434,9 +520,10 @@
   window.addEventListener("mousemove", (e) => {
     if (S.captured) {
       // 已接管：指针离开角色像素就交还穿透，避免挡住整块桌面。
-      // 例外：菜单打开期间保持接管（见 contextmenu），否则菜单点不着。
+      // 例外：菜单打开期间保持接管（见 contextmenu），否则菜单点不着；
+      // 飞行中也保持（窗口自身在动，指针位置无意义，落地后由下一帧判定释放）。
       const menuOpen = menuEl.classList.contains("show");
-      if (!hitsPet(e.clientX, e.clientY) && !S.dragging && !menuOpen) setCapture(false);
+      if (!hitsPet(e.clientX, e.clientY) && !S.dragging && !S.flight && !menuOpen) setCapture(false);
     } else if (hitsPet(e.clientX, e.clientY)) {
       setCapture(true);
     }
@@ -452,6 +539,8 @@
     // 菜单还挂着但点不着，又回到「看得见摸不着」的状态。
     menuEl.classList.remove("show"); menubg.classList.remove("show");
     if (!S.dragging) setCapture(false);
+    // 飞行中失焦：rAF 可能被节流，校时标记置空，恢复后首帧只对时不步进大 dt
+    if (S.flight) S.flight.lastT = null;
   });
 
   function buildMenu() {

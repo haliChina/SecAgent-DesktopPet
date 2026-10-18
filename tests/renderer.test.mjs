@@ -11,6 +11,7 @@ const petJs = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "pet", "renderer", "pet.js"),
   "utf8"
 );
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** 从源码提取顶层具名函数（按大括号配对），注入常量后返回可调用副本。 */
 function extractFunction(name, consts) {
@@ -42,13 +43,15 @@ test("drag_start 延迟到真实移动（0.4.1 实机：长按不动也进跑步
   assert.ok(down, "未找到 pointerdown 处理器");
   assert.doesNotMatch(down, /postEvent\("drag_start"/, "pointerdown 不应立即发 drag_start");
   assert.match(petJs, /S\.dragMoved = true;\s*\n\s*postEvent\("drag_start", 1\)/, "drag_start 应在首次移动 >6px 时发");
-  // 跑步动画行选择也须有 dragMoved 门控
-  assert.match(petJs, /if \(S\.dragging && S\.dragMoved && layout\)/);
+  // 跑步动画行选择也须有 dragMoved 门控（0.5.0 起飞行态同走跑步行）
+  assert.match(petJs, /const inMotion = \(S\.dragging && S\.dragMoved\) \|\| !!S\.flight;/);
+  assert.match(petJs, /if \(inMotion && layout\)/);
 });
 
 test("右键菜单打开期间保持接管（0.4.0 实机：鼠标移向菜单即释放穿透，菜单点不着）", () => {
   assert.match(petJs, /menuEl\.classList\.add\("show"\); menubg\.classList\.add\("show"\);[\s\S]{0,200}setCapture\(true\)/);
-  assert.match(petJs, /!hitsPet\(e\.clientX, e\.clientY\) && !S\.dragging && !menuOpen/);
+  // 释放条件含 menuOpen 保护；0.5.0 起飞行中同样保持接管
+  assert.match(petJs, /!hitsPet\(e\.clientX, e\.clientY\) && !S\.dragging && !S\.flight && !menuOpen/);
 });
 
 test("失焦时连菜单一起收起（只释放穿透不关菜单 = 菜单挂着但点不着）", () => {
@@ -87,6 +90,36 @@ test("deriveAtlasLayout：标准与任意倍率图集都能推导，几何不吻
 test("loadSkin 尺寸复核优先级：pet.json 有效 layout > 几何推导 > 默认（判失败）", () => {
   assert.match(petJs, /const petJsonValid = !!\(l\.cols && l\.rows && l\.cellW && l\.cellH/);
   assert.match(petJs, /const derived = deriveAtlasLayout\(img\.naturalWidth, img\.naturalHeight\)/);
+});
+
+test("甩出物理接入：轨迹采样 → 死区判定 → 飞行循环（0.5.0，移植自 dsh-pet-indesktop）", () => {
+  // 拖拽中采样轨迹并保留窗口
+  assert.match(petJs, /S\.trail\.push\(\[t, e\.screenX, e\.screenY\]\)/);
+  assert.match(petJs, /t - PHYS\.TRAIL_KEEP_SEC/);
+  // 松手估算初速，死区内不起飞，开关可关
+  assert.match(petJs, /PHYS\.estimateReleaseVelocity\(S\.trail, performance\.now\(\) \/ 1000, cap\)/);
+  assert.match(petJs, /Math\.hypot\(vx, vy\) >= PHYS\.DEAD_ZONE_SPEED/);
+  assert.match(petJs, /S\.config\.throwPhysics/);
+  // 飞行循环：子步积分 + 静止判定 + 每帧驱动
+  assert.match(petJs, /function stepFlight\(tSec\)/);
+  assert.match(petJs, /PHYS\.throwStep\(f\.px, f\.py, f\.vx, f\.vy, h/);
+  assert.match(petJs, /PHYS\.isAtRest\(f\.py, f\.vx, f\.vy, f\.bounds\[3\], f\.bounced/);
+  assert.match(petJs, /stepFlight\(t \/ 1000\)/);
+  // 写位置优先级：新宿主 setPosition 绝对定位，旧宿主 move 差分兜底
+  assert.match(petJs, /if \(hostBridge\.setPosition\) hostBridge\.setPosition\(x, y\)/);
+  // 飞行动画随速度加速
+  assert.match(petJs, /PHYS\.flightAnimSpeed\(Math\.hypot\(S\.flight\.vx, S\.flight\.vy\)\)/);
+});
+
+test("甩出物理经 window.__petPhysics 注入，缺失时整体禁用（不炸页面）", () => {
+  assert.match(petJs, /const PHYS = window\.__petPhysics \|\| null/);
+});
+
+test("主进程注入：physics.js 剥 export 后附 window.__petPhysics（main.mjs）", () => {
+  const mainJs = fs.readFileSync(path.join(root, "main.mjs"), "utf8");
+  assert.match(mainJs, /\.replace\(\/\^export const \/gm, "const "\)/);
+  assert.match(mainJs, /\.replace\(\/\^export function \/gm, "function "\)/);
+  assert.match(mainJs, /window\.__petPhysics = \{/);
 });
 
 test("尺寸热更新：轮询检测 size 变化即 fitCanvas（0.4.1 实机：改大小要重启客户端）", () => {
