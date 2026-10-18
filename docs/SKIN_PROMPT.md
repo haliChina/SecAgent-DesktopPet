@@ -12,7 +12,36 @@
 
 ## 路线 A：让编码 Agent 全自动做（推荐）
 
-把下面整段复制给能操作文件、能调图像生成工具的 Agent（SecAgent 本体、Claude Code、Cursor 都行）：
+### 一键生成 prompt
+
+不想手动拼模板？仓库自带生成器，一句话进、完整契约 prompt 出：
+
+```bash
+node scripts/gen-skin-prompt.mjs "一只戴圆眼镜的橘猫程序员"
+# 中文描述自动分配短 id；英文词会直接作词组 id
+SKIN_ID=orange-cat-coder node scripts/gen-skin-prompt.mjs "orange cat coder"   # 指定 id
+SKIN_DIR=/path/to/dir node scripts/gen-skin-prompt.mjs "..."                   # 指定安装目录
+```
+
+把输出整段复制给 SecAgent / Claude Code / Cursor 等任意编码 Agent，它会走
+「定妆图确认 → 逐行生成 → 脚本拼图 → pet_config 校验 → pet_skin 实测」的完整闭环。
+
+> **注意：编码 Agent 无生图能力时的分工**（SecAgent 宿主即如此）：
+> 1. Agent 生成上面这份 prompt 交给你；
+> 2. 你把 prompt 拿到有生图能力的工具（ChatGPT / 豆包 / Midjourney 等）产帧图；
+> 3. 帧图（或整张未拼的横条图）交回给 Agent，它负责拼图集、校验尺寸、写 pet.json、
+>    安装并 `pet_skin` 实测——技术环节全部由 Agent 收尾。
+>
+> prompt 本身是**可移植**的：它只描述契约与流程，不绑定具体生图工具。
+
+### 宿主内一句话
+
+**宿主内直接说「帮我做个皮肤：<描述>」也行**——桌宠技能会按上述分工自动编排
+（生图交给你，其余它包办）。
+
+### 手动模板
+
+偏好自己掌控细节时，把下面整段复制给能操作文件、能调图像生成工具的 Agent：
 
 ````markdown
 帮我做一套桌宠皮肤并安装。严格遵守以下契约（来源：desktop-pet 的 docs/SKIN_SPEC.md）。
