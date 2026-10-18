@@ -18,7 +18,10 @@ description: 在桌面养一只小宠物：兼容社区 Codex 桌宠皮肤，跟
 - 自动发现的位置：`~/.codex/pets/`、`~/.petdex/pets/`（`npx petdex install` 装的）、`$PETDEX_PET`，零转换；
 - `pet_skin` 不传参列出皮肤，传 `skinId` 切换；切换会热生效，不用重开窗口；
 - 本地没有想要的皮肤时，先 `pet_store` 传 `query` 搜索，再传 `slug` 安装，装完立刻可换；
-- 没有皮肤时显示内置小鲸鱼兜底形象，照样可交互。
+- 没有皮肤时显示内置小鲸鱼兜底形象，照样可交互；
+- 要给用户新做皮肤：动画契约规范见 `docs/SKIN_SPEC.md`（状态行表/帧数/注视罗盘/校验规则），
+  制作流程与可复制的 prompt 模板见 `docs/SKIN_PROMPT.md`（Agent 自动做/图像模型半自动/手工三条路线），
+  做完用 `pet_skin` 切换验证，尺寸不符会有「皮肤尺寸对不上契约」气泡。
 
 ## 工具契约
 
