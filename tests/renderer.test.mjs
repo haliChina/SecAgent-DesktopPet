@@ -106,13 +106,28 @@ test("甩出物理接入：轨迹采样 → 死区判定 → 飞行循环（0.5.
   assert.match(petJs, /PHYS\.isAtRest\(f\.py, f\.vx, f\.vy, f\.bounds\[3\], f\.bounced/);
   assert.match(petJs, /stepFlight\(t \/ 1000\)/);
   // 写位置优先级：新宿主 setPosition 绝对定位，旧宿主 move 差分兜底
-  assert.match(petJs, /if \(hostBridge\.setPosition\) hostBridge\.setPosition\(x, y\)/);
+  assert.match(petJs, /if \(hostBridge\.setPosition\) \{[\s\S]{0,60}hostBridge\.setPosition\(x, y\)/);
+  // 0.5.3（#8）甩出屏幕自愈：写后读回 screenX/Y，严重偏差 → 采纳实测并钳回边界
+  assert.match(petJs, /Math\.abs\(sx - x\) > 48 \|\| Math\.abs\(sy - y\) > 48/);
+  assert.match(petJs, /clampNum\(sx, f\.bounds\[0\], f\.bounds\[2\]\)/);
   // 飞行动画随速度加速
   assert.match(petJs, /PHYS\.flightAnimSpeed\(Math\.hypot\(S\.flight\.vx, S\.flight\.vy\)\)/);
 });
 
 test("甩出物理经 window.__petPhysics 注入，缺失时整体禁用（不炸页面）", () => {
   assert.match(petJs, /const PHYS = window\.__petPhysics \|\| null/);
+});
+
+test("拖拽与起飞门槛（#8：小幅拖动反向走 / 蹭一下甩飞）", () => {
+  // 拖拽优先渲染端绝对定位（e.screenX 与 setPosition 同一 DIP 空间，自纠错）
+  assert.match(petJs, /hostBridge\.setPosition\(e\.screenX - S\.grabOffset\.x, e\.screenY - S\.grabOffset\.y\)/);
+  // moveTo 降级保留（旧宿主）
+  assert.match(petJs, /else if \(hostBridge && hostBridge\.moveTo\)/);
+  // 总位移 < 12px 不起飞（高速微蹭的初速估算噪声）
+  assert.match(petJs, /totalDist >= 12 && Math\.hypot\(vx, vy\) >= PHYS\.DEAD_ZONE_SPEED/);
+  // 停顿判定放宽（0.15 → 0.25）：拖一下再停下的停顿不再误判为甩出
+  const physicsJs = fs.readFileSync(path.join(root, "pet/renderer/physics.js"), "utf8");
+  assert.match(physicsJs, /RELEASE_STALE_SEC = 0\.25/);
 });
 
 test("主进程注入：physics.js 剥 export 后附 window.__petPhysics（main.mjs）", () => {

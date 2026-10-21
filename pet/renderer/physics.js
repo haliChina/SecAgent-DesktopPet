@@ -11,7 +11,9 @@
 // ---- 松手初速估算 ----
 export const TRAIL_KEEP_SEC = 0.15;    // 拖拽途中只保留这么长的轨迹
 export const RELEASE_WINDOW_SEC = 0.12; // 初速估算取末尾这段窗口
-export const RELEASE_STALE_SEC = 0.15; // 松手前停顿超过它 = 静止放下（不带残余速度）
+export const RELEASE_STALE_SEC = 0.25; // 松手前停顿超过它 = 静止放下（不带残余速度）
+                                        // 0.5.3（#8）：0.15 → 0.25——用户「拖一下再停下」
+                                        // 的停顿常落在 0.15~0.25s，被当成甩出初速来源；
 export const MIN_SPAN_SEC = 0.02;      // 窗口太短视为不可估算
 export const SEG_MIN_DT = 0.008;       // 分段速度的最小 dt：高回报率鼠标事件间隔可低至 1ms，
                                        // 过小的 dt 会把抖动放大成虚假峰值，短段向前合并
