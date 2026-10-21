@@ -403,17 +403,35 @@
     }
   }
 
-  /** 写位置：新宿主 setPosition（绝对）；旧宿主 move（差分）；浏览器 stage。 */
+  /** 写位置：新宿主 setPosition（绝对）；旧宿主 move（差分）；浏览器 stage。
+   *  0.5.3（#8 甩出屏幕自愈）：写后读回 window.screenX/Y——若与期望位置偏差
+   *  超过 48px（宿主把坐标映射进了另一个空间，混合 DPI 下的已知形态），
+   *  就把物理位置**采纳为实测位置并钳回边界**重写。桌宠永远不出工作区。 */
   function writeFlightPos(f) {
-    const x = Math.round(f.px), y = Math.round(f.py);
+    let x = Math.round(f.px), y = Math.round(f.py);
     if (f.browser) {
       stage.style.left = x + "px";
       stage.style.top = y + "px";
       return;
     }
-    if (hostBridge.setPosition) hostBridge.setPosition(x, y);
-    else if (hostBridge.move && f.written) hostBridge.move(x - f.written[0], y - f.written[1]);
+    if (hostBridge.setPosition) {
+      hostBridge.setPosition(x, y);
+      // 写后校验（下一帧读回时生效，Electron 异步落位）：严重偏差 → 采纳实测并钳位
+      const sx = window.screenX, sy = window.screenY;
+      if (Math.abs(sx - x) > 48 || Math.abs(sy - y) > 48) {
+        x = clampNum(sx, f.bounds[0], f.bounds[2]);
+        y = clampNum(sy, f.bounds[1], f.bounds[3]);
+        f.px = x; f.py = y;
+        hostBridge.setPosition(x, y);
+      }
+    } else if (hostBridge.move && f.written) {
+      hostBridge.move(x - f.written[0], y - f.written[1]);
+    }
     f.written = [x, y];
+  }
+
+  function clampNum(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
   }
 
   function frame(t) {
@@ -461,7 +479,13 @@
     // 方向按总位移判定（逐事件增量会因抖动来回翻转）
     S.dragDir = totalDx < 0 ? -1 : 1;
     postEvent("drag_move", S.dragDir);
-    if (hostBridge && hostBridge.moveTo) {
+    // 0.5.3（#8）：拖拽优先「渲染端绝对定位」——窗口原点 = e.screenX - 抓取偏移。
+    // e.screenX 与 window.screenX 同属渲染进程 DIP 空间，与 setPosition 入参一致，
+    // 天然自纠错。旧首选 moveTo 依赖主进程 getCursorScreenPoint()，混合 DPI
+    // 多显示器下主进程与渲染进程坐标空间可能不一致，实机表现为小幅拖动反向走。
+    if (hostBridge && hostBridge.setPosition) {
+      hostBridge.setPosition(e.screenX - S.grabOffset.x, e.screenY - S.grabOffset.y);
+    } else if (hostBridge && hostBridge.moveTo) {
       hostBridge.moveTo(S.grabOffset.x, S.grabOffset.y);
     } else if (hostBridge && hostBridge.move) {
       hostBridge.move(e.screenX - S.downScreen.x, e.screenY - S.downScreen.y);
@@ -485,11 +509,19 @@
     const wasDrag = S.dragMoved;
     S.dragging = false; S.dragMoved = false; S.downScreen = null; S.downStartScreen = null;
     postEvent("drag_end");
-    // 甩出判定：末段速度过死区即起飞（物理移植自 dsh-pet-indesktop，MIT）
+    // 甩出判定：末段速度过死区即起飞（物理移植自 dsh-pet-indesktop，MIT）。
+    // 0.5.3（#8）加总位移门槛：高速蹭一下（<12px）的初速估算噪声极大，
+    // 实机表现为「拖动一点再停下也甩飞」——蹭动一律视为原地放下。
     if (wasDrag && PHYS && S.config.throwPhysics) {
+      const totalDist = S.trail.length >= 2
+        ? Math.hypot(
+            S.trail[S.trail.length - 1][1] - S.trail[0][1],
+            S.trail[S.trail.length - 1][2] - S.trail[0][2]
+          )
+        : 0;
       const cap = PHYS.throwSpeedCap(S.config.throwStrength);
       const [vx, vy] = PHYS.estimateReleaseVelocity(S.trail, performance.now() / 1000, cap);
-      if (Math.hypot(vx, vy) >= PHYS.DEAD_ZONE_SPEED) startFlight(vx, vy);
+      if (totalDist >= 12 && Math.hypot(vx, vy) >= PHYS.DEAD_ZONE_SPEED) startFlight(vx, vy);
     }
     S.trail = [];
     if (!wasDrag && performance.now() - S.downT < 400) {
