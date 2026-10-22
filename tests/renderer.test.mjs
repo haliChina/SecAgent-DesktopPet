@@ -144,3 +144,24 @@ test("尺寸热更新：轮询检测 size 变化即 fitCanvas（0.4.1 实机：�
   // 轮询必须合并 config（气泡时长等同样热更）
   assert.match(petJs, /S\.config = \{ \.\.\.S\.config, \.\.\.\(data\.config \|\| \{\}\) \};/);
 });
+
+test("Codex review PR#5：碰撞边界按窗口尺寸收缩 + 落地释放输入接管（0.5.4）", () => {
+  // P1：bounds 右/下必须减窗口尺寸——否则窗口左上角贴工作区边=整只桌宠在屏外
+  assert.match(petJs, /Math\.max\(left \+ 64, right - w\)/);
+  assert.match(petJs, /Math\.max\(top \+ 64, bottom - h\)/);
+  assert.match(petJs, /window\.innerWidth/);
+  assert.match(petJs, /innerWidth - Math\.round\(r\.width\)/, "浏览器分支同样按 stage 尺寸收缩");
+  // P2：落地（isAtRest）即释放穿透接管，不依赖下一次 mousemove
+  assert.match(petJs, /if \(!menuOpen\) setCapture\(false\);/);
+});
+
+test("Codex review PR#5 P1：发布包含 THIRD_PARTY_NOTICES.md（MIT 分发合规）", async () => {
+  const packSrc = fs.readFileSync(path.join(root, "scripts/pack.mjs"), "utf8");
+  assert.match(packSrc, /"THIRD_PARTY_NOTICES\.md"/);
+  assert.ok(fs.existsSync(path.join(root, "THIRD_PARTY_NOTICES.md")), "文件本体存在");
+  const spec = fs.readFileSync(path.join(root, "docs/SKIN_SPEC.md"), "utf8");
+  // PR#6 文档三处对齐 ACTIVITY_MAP 实况
+  assert.match(spec, /turn_completed.*waving|完成（`turn_completed`）→ `waving`/);
+  assert.match(spec, /turn_started.*review|回合开始（`turn_started`）→ `review`/);
+  assert.match(spec, /pet_emote` 工具的 emote 枚举/);
+});
