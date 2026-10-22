@@ -13,7 +13,7 @@ const releaseDir = path.join(root, "release");
 const stage = path.join(releaseDir, "stage");
 const outZip = path.join(releaseDir, `desktop-pet-${version}.zip`);
 
-const FILES = ["secagent-plugin.json", "package.json", "main.mjs", "README.md"];
+const FILES = ["secagent-plugin.json", "package.json", "main.mjs", "README.md", "THIRD_PARTY_NOTICES.md"]; // 含 MIT 派生代码（physics.js）→ 许可全文必须随包分发（Codex review PR#5 P1）
 const DIRS = ["pet", "settings", "skills", "docs"];
 
 fs.rmSync(stage, { recursive: true, force: true });

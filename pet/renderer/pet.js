@@ -360,20 +360,26 @@
     const now = performance.now() / 1000;
     if (hostBridge) {
       // 屏幕工作区边界（当前屏；availLeft/Top 缺失时按主屏近似）。
-      // 窗口底贴屏底时桌宠脚距屏底 24px——与其待机在右下角时一致。
+      // 0.5.4（Codex review PR#5 P1）：px/py 是窗口**左上角**，碰撞边界必须
+      // 按窗口尺寸收缩——否则向下/向右甩落定时窗口顶/左边贴工作区边，
+      // 整只桌宠（overlay 最小 300px 高）沉到屏幕外看不见。
+      // bottom-h 后：窗口底贴屏底落地，与待机右下角姿态一致。
       const left = screen.availLeft ?? 0;
       const top = screen.availTop ?? 0;
       const right = left + (screen.availWidth || screen.width);
       const bottom = top + (screen.availHeight || screen.height);
+      const w = Math.max(1, Math.round(window.innerWidth));
+      const h = Math.max(1, Math.round(window.innerHeight));
       const px = window.screenX, py = window.screenY;
-      S.flight = { px, py, vx, vy, lastT: now, bounced: false, written: [px, py], browser: false, bounds: [left, top, right, bottom] };
+      S.flight = { px, py, vx, vy, lastT: now, bounced: false, written: [px, py], browser: false, bounds: [left, top, Math.max(left + 64, right - w), Math.max(top + 64, bottom - h)] };
     } else {
       // 浏览器降级：stage 从 right/bottom 定位切换为 left/top
       const r = stage.getBoundingClientRect();
       stage.style.right = "auto"; stage.style.bottom = "auto";
       stage.style.left = r.left + "px"; stage.style.top = r.top + "px";
       S.stagePos = null;
-      S.flight = { px: r.left, py: r.top, vx, vy, lastT: now, bounced: false, written: null, browser: true, bounds: [0, 0, innerWidth, innerHeight] };
+      // 同上：边界按 stage 尺寸收缩，落地是 stage 底贴视口底
+      S.flight = { px: r.left, py: r.top, vx, vy, lastT: now, bounced: false, written: null, browser: true, bounds: [0, 0, Math.max(64, innerWidth - Math.round(r.width)), Math.max(64, innerHeight - Math.round(r.height))] };
     }
   }
 
@@ -396,6 +402,10 @@
     writeFlightPos(f);
     if (PHYS.isAtRest(f.py, f.vx, f.vy, f.bounds[3], f.bounced, Math.hypot(f.vx, f.vy))) {
       S.flight = null;
+      // 0.5.4（Codex review PR#5 P2）：落地必须释放输入接管——否则用户甩出
+      // 后保持鼠标不动，捕获释放路径（依赖 mousemove）不触发，透明 overlay
+      // 持续拦截其矩形内的桌面点击。
+      if (!menuOpen) setCapture(false);
       if (Math.random() < 0.5) {
         const lines = ["哎哟！", "好晕…", "落地啦~", "呼——"];
         say(lines[Math.floor(Math.random() * lines.length)]);
