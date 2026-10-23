@@ -165,3 +165,15 @@ test("Codex review PR#5 P1：发布包含 THIRD_PARTY_NOTICES.md（MIT 分发合
   assert.match(spec, /turn_started.*review|回合开始（`turn_started`）→ `review`/);
   assert.match(spec, /pet_emote` 工具的 emote 枚举/);
 });
+
+test("睡觉变暗：透明 overlay 窗口禁 CSS filter（0.5.5 桌宠变透明根因）", () => {
+  // 根因：#pet.sleeping 的 CSS filter 在 Windows 透明 BrowserWindow 上破坏
+  // DWM 合成层，闲置自动入睡（idleSleepSec）后整只桌宠「变透明」消失。
+  const html = fs.readFileSync(path.join(root, "pet/renderer/index.html"), "utf8");
+  assert.doesNotMatch(html, /#pet\.sleeping\s*\{/, "sleeping 不再用 CSS 类样式");
+  assert.doesNotMatch(html, /filter:/, "渲染页不得使用 CSS filter（透明窗口雷区）");
+  // 变暗移入画布：drawSprite 内 globalAlpha
+  assert.match(petJs, /if \(S\.state === "sleeping"\) ctx\.globalAlpha = 0\.62/);
+  // class 残留清理：不再 toggle sleeping 类
+  assert.doesNotMatch(petJs, /classList\.toggle\("sleeping"/);
+});

@@ -16,7 +16,10 @@
     cursor: pointer;
   }
   #pet { display: block; }
-  #pet.sleeping { filter: saturate(.4) brightness(.85); }
+  /* 0.5.5：睡觉变暗移入 canvas 绘制（ctx.globalAlpha）。
+     透明 BrowserWindow 上禁用 CSS filter——Electron 在 Windows 透明窗
+     对元素 filter（saturate/brightness 等）会破坏 DWM 合成层，实机表现
+     为「闲置入睡后整只桌宠变透明消失」（用户 0.5.4 实机反馈）。 */
   #bubble {
     position: absolute; bottom: calc(100% + 10px); right: 0;
     max-width: 220px; padding: 8px 12px;
