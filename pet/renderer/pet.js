@@ -189,6 +189,15 @@
   }
 
   // ---------- 绘制 ----------
+  /** 0.5.6：睡觉/变暗统一画布叠暗罩——source-atop 只作用于已画像素，
+   *  贴合宠物轮廓；不透明度恒 100%，杜绝任何「变透明」观感。 */
+  function dimSprite(ctx2, w, h) {
+    ctx2.globalCompositeOperation = "source-atop";
+    ctx2.fillStyle = "rgba(8,10,28,0.42)";
+    ctx2.fillRect(0, 0, w, h);
+    ctx2.globalCompositeOperation = "source-over";
+  }
+
   function drawSprite() {
     const layout = S.skin.layout;
     const spec = currentSpec();
@@ -209,13 +218,14 @@
     const cw = layout.cellW || CELL_W, ch = layout.cellH || CELL_H;
     ctx.save();
     ctx.clearRect(0, 0, CELL_W, CELL_H);
-    // 0.5.5：睡觉变暗在画布内做（globalAlpha）——透明 overlay 窗口上 CSS
-    // filter 会让整层在 Windows 合成中消失（实机「桌宠变透明」的根因）。
-    if (S.state === "sleeping") ctx.globalAlpha = 0.62;
     if (flip) { ctx.translate(CELL_W, 0); ctx.scale(-1, 1); }
     let oy = 0;
     if (S.state === "jumping") oy = -Math.abs(Math.sin(performance.now() / 180)) * 26;
     ctx.drawImage(S.skinImg, col * cw, row * ch, cw, ch, 0, oy, CELL_W, CELL_H);
+    // 0.5.5→0.5.6：睡觉变暗用「叠暗罩」（source-atop 只叠已画像素）而非
+    // globalAlpha 降透明度——后者用户观感就是「桌宠变透明」（0.5.5 实机
+    // 反馈「切皮肤出现渲染问题：变透明」）。叠暗法不透明度恒 100%。
+    if (S.state === "sleeping") dimSprite(ctx, CELL_W, CELL_H);
     ctx.restore();
   }
 
@@ -291,7 +301,6 @@
     const sleeping = S.state === "sleeping";
 
     ctx.save();
-    if (sleeping) ctx.globalAlpha = 0.75;
 
     const wag = Math.sin(t / 300) * 0.35;
     ctx.save();
@@ -351,6 +360,7 @@
         ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2); ctx.fill();
       }
     }
+    if (sleeping) dimSprite(ctx, w, h);
     ctx.restore();
   }
 
