@@ -89,6 +89,8 @@ npm run pack      # 生成 release/desktop-pet-<version>.zip
 
 - **桌宠变透明（0.5.4，实机）**：闲置自动入睡后整只桌宠「变透明」消失——根因是 `#pet.sleeping` 的 CSS `filter`（saturate/brightness）：**Electron 在 Windows 透明 BrowserWindow 上，元素 filter 会破坏 DWM 合成层**，整个 canvas 渲染不出来。0.5.5 起睡觉变暗移入画布绘制（`ctx.globalAlpha`），渲染页不再使用任何 CSS filter（透明窗口雷区清单固化进测试）。
 
+- **切皮肤出现渲染问题：变透明（0.5.5，实机）**：两个叠加因素——①换皮肤事件**只换皮肤不唤醒**，睡着时换上新皮肤，宠物仍处于睡眠态；②0.5.5 的睡觉变暗用 `globalAlpha 0.62`（降不透明度），用户观感就是「变透明」。0.5.6 双修：换皮肤视为互动自动唤醒（宿主 `dispatch("skin")` 路径，渲染页菜单与 pet_skin 工具两路同享）；睡觉变暗改为**画布叠暗罩**（`source-atop` 只叠已画像素、贴合轮廓，不透明度恒 100%），兜底鲸鱼同步改。
+
 ## 致谢
 
 桌宠的甩出物理（拖拽轨迹采速、松手初速估算、抛掷积分与四边反弹、四档力度）移植自

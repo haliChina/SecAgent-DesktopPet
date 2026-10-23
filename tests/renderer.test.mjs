@@ -172,8 +172,19 @@ test("睡觉变暗：透明 overlay 窗口禁 CSS filter（0.5.5 桌宠变透明
   const html = fs.readFileSync(path.join(root, "pet/renderer/index.html"), "utf8");
   assert.doesNotMatch(html, /#pet\.sleeping\s*\{/, "sleeping 不再用 CSS 类样式");
   assert.doesNotMatch(html, /filter:/, "渲染页不得使用 CSS filter（透明窗口雷区）");
-  // 变暗移入画布：drawSprite 内 globalAlpha
-  assert.match(petJs, /if \(S\.state === "sleeping"\) ctx\.globalAlpha = 0\.62/);
+  // 变暗移入画布（0.5.6 叠暗罩替代 globalAlpha——降不透明度会被看成「变透明」）
+  assert.match(petJs, /if \(S\.state === "sleeping"\) dimSprite\(ctx, CELL_W, CELL_H\)/);
   // class 残留清理：不再 toggle sleeping 类
   assert.doesNotMatch(petJs, /classList\.toggle\("sleeping"/);
+});
+
+test("切皮肤不再「变透明」（0.5.6）：换肤唤醒 + 叠暗罩替代 globalAlpha", () => {
+  // ① 渲染端：睡觉变暗必须用叠暗罩（source-atop），不得用 globalAlpha 降不透明度
+  assert.match(petJs, /dimSprite/);
+  assert.match(petJs, /source-atop/);
+  assert.doesNotMatch(petJs, /ctx\.globalAlpha = 0\.\d+.*sleeping/s, "睡觉不得降画布不透明度");
+  assert.doesNotMatch(petJs, /if \(sleeping\) ctx\.globalAlpha/);
+  // ② 宿主端：换皮肤事件必须唤醒（否则新皮肤带着睡眠暗罩/旧版半透明渲染）
+  const mainSrc = fs.readFileSync(path.join(root, "main.mjs"), "utf8");
+  assert.match(mainSrc, /event === "skin"[\s\S]{0,400}dispatch\("wake"\)/, "skin 事件路径含唤醒");
 });

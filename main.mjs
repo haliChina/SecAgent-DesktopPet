@@ -100,7 +100,11 @@ export async function activate(api) {
       if (event === "skin") {
         const skins = listSkins();
         if (skins.some((s) => s.id === arg)) skinOverride = String(arg);
-        return observeState(pet.snapshot().state);
+        const snap = pet.snapshot();
+        // 0.5.6：换皮肤视为互动——从睡眠中唤醒。否则新皮肤以睡眠暗罩渲染
+        // （旧版 globalAlpha 0.62），用户实机反馈「切皮肤变透明」。
+        if (snap.state === "sleeping") return observeState(pet.dispatch("wake"));
+        return observeState(snap.state);
       }
       return observeState(pet.dispatch(event, arg));
     },
