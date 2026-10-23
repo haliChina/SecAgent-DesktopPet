@@ -14,7 +14,8 @@
   const CELL_W = F.frameWidth || 192, CELL_H = F.frameHeight || 208;
   const LOOK_COLUMNS = 8;
 
-  // 契约里没有独立的睡觉行，sleeping 复用 idle 行，由 CSS 做闭眼/变暗。
+  // 契约里没有独立的睡觉行，sleeping 复用 idle 行，变暗在画布内做
+  // （globalAlpha——透明 overlay 窗口上禁 CSS filter，0.5.5 实机踩坑）。
   const STATE_ALIAS = { sleeping: "idle" };
 
   const canvas = document.getElementById("pet");
@@ -208,6 +209,9 @@
     const cw = layout.cellW || CELL_W, ch = layout.cellH || CELL_H;
     ctx.save();
     ctx.clearRect(0, 0, CELL_W, CELL_H);
+    // 0.5.5：睡觉变暗在画布内做（globalAlpha）——透明 overlay 窗口上 CSS
+    // filter 会让整层在 Windows 合成中消失（实机「桌宠变透明」的根因）。
+    if (S.state === "sleeping") ctx.globalAlpha = 0.62;
     if (flip) { ctx.translate(CELL_W, 0); ctx.scale(-1, 1); }
     let oy = 0;
     if (S.state === "jumping") oy = -Math.abs(Math.sin(performance.now() / 180)) * 26;
@@ -348,7 +352,6 @@
       }
     }
     ctx.restore();
-    canvas.classList.toggle("sleeping", sleeping);
   }
 
   // ---------- 宿主桥接：优先新版 __secagentOverlay，兼容旧名 __petHost ----------
@@ -448,7 +451,7 @@
     stepFlight(t / 1000);
     advance(t);
     S.lastT = t;
-    if (S.skinOk && S.atlasOk) { drawSprite(); canvas.classList.toggle("sleeping", S.state === "sleeping"); }
+    if (S.skinOk && S.atlasOk) { drawSprite(); }
     else drawFallback(t);
     requestAnimationFrame(frame);
   }

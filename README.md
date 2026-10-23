@@ -87,6 +87,8 @@ npm run pack      # 生成 release/desktop-pet-<version>.zip
 - **拖一下停下也甩飞 / 甩出屏幕 / 小幅拖动反向走（0.5.2，#8）**：三个根因——①「蹭一下」的总位移小于采样噪声尺度，初速估算虚高，0.5.3 起总位移 <12px 一律原地放下（停顿判定 0.15s→0.25s 同步收紧）；②飞行写位后无校验，宿主坐标空间错位时窗口会飞出工作区，0.5.3 起每帧读回 `window.screenX/Y`，偏差 >48px 即采纳实测位置并钳回边界（桌宠永远不出屏幕）；③拖拽首选协议依赖宿主主进程光标坐标，混合 DPI 多显示器下与渲染进程坐标空间不一致表现为反向走，0.5.3 起拖拽改为**渲染端绝对定位**（`setPosition(e.screenX - 抓取偏移)`，与窗口坐标同一 DIP 空间、逐帧自纠错；旧宿主自动退回 moveTo/增量协议）。
 - **向下甩桌宠沉出屏幕底部 / 甩出后鼠标不动就挡住桌面输入 / 发布包缺 MIT 许可（0.5.3，Codex review PR#5/#6）**：①飞行碰撞边界曾直接用工作区边——但积分的 px/py 是窗口**左上角**，落定时窗口顶贴屏底=整只桌宠在屏外（overlay 最小 300px 高）；0.5.4 起边界按窗口尺寸收缩（窗口底贴屏底落地，浏览器降级分支同理按 stage 尺寸）；②落地结算即释放输入接管（旧路径依赖下一次 mousemove，甩出后鼠标静止则透明 overlay 持续拦截桌面点击）；③`THIRD_PARTY_NOTICES.md` 纳入发布包（physics.js 为 MIT 派生代码，许可全文须随分发）；④`SKIN_SPEC.md` 状态映射对齐 `ACTIVITY_MAP` 实况（turn_completed→waving、turn_started→review），扩展新状态的步骤补上 `pet_emote` 枚举（老宿主兜底路径）。
 
+- **桌宠变透明（0.5.4，实机）**：闲置自动入睡后整只桌宠「变透明」消失——根因是 `#pet.sleeping` 的 CSS `filter`（saturate/brightness）：**Electron 在 Windows 透明 BrowserWindow 上，元素 filter 会破坏 DWM 合成层**，整个 canvas 渲染不出来。0.5.5 起睡觉变暗移入画布绘制（`ctx.globalAlpha`），渲染页不再使用任何 CSS filter（透明窗口雷区清单固化进测试）。
+
 ## 致谢
 
 桌宠的甩出物理（拖拽轨迹采速、松手初速估算、抛掷积分与四边反弹、四档力度）移植自
