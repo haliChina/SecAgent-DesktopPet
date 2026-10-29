@@ -41,6 +41,9 @@
     scale: 1,
     dragging: false,
     dragMoved: false,
+    loadSeq: 0,      // 皮肤加载令牌：慢的旧图回调不得覆盖新皮肤（0.5.7）
+    lastFrameAt: 0,  // 最近一次帧步进时刻，供 rAF 停摆看门狗判定
+    rafChained: false,
     grabOffset: null,
     downScreen: null, downStartScreen: null, downT: 0,
     appliedSize: 0,
@@ -98,11 +101,13 @@
   }
 
   function loadSkin(skin) {
+    const seq = ++S.loadSeq;
     S.skin = skin; S.skinOk = false; S.skinImg = null;
     bboxCache.clear();
-    if (!skin) { fitCanvas(); return; }
+    if (!skin) { fitCanvas(); paintNow(); return; }
     const img = new Image();
     img.onload = () => {
+      if (seq !== S.loadSeq) return; // 已有更新的加载在途，旧回调一律丢弃
       // 以实际尺寸复核版式：声明与图集不符时按图集纠正，仍不符则拒绝播放（画出来只会是错位网格）。
       // 优先级：pet.json 显式 layout 且与实际尺寸吻合 > 按几何推导（标准及任意倍率）> 默认版式（将判失败）。
       const l = skin.layout || {};
@@ -118,15 +123,18 @@
       const ok = (img.naturalWidth === skin.layout.cols * skin.layout.cellW)
         && (img.naturalHeight === skin.layout.rows * skin.layout.cellH);
       S.atlasOk = ok;
-      if (!ok) {
-        S.skinImg = img; S.skinOk = true; fitCanvas();
-        say("皮肤尺寸对不上契约，已停播");
-        return;
-      }
       S.skinImg = img; S.skinOk = true;
+      // 0.5.7 关键修复：fitCanvas 会重设 canvas.width（清空画布）。若此时 rAF
+      // 被宿主节流/暂停（透明 overlay 被误判遮挡时会发生），画布就一直是空的——
+      // 实机表现为「换皮肤后桌宠凭空消失」。装载完必须同步补画一帧。
       fitCanvas();
+      paintNow();
+      if (!ok) say("皮肤尺寸对不上契约，已停播");
     };
-    img.onerror = () => { S.skin = null; fitCanvas(); };
+    img.onerror = () => {
+      if (seq !== S.loadSeq) return;
+      S.skin = null; fitCanvas(); paintNow();
+    };
     img.src = "/skin-file/" + encodeURIComponent(skin.id) + "?token=" + encodeURIComponent(TOKEN);
   }
 
@@ -136,6 +144,14 @@
     canvas.width = CELL_W; canvas.height = CELL_H;
     canvas.style.width = target + "px";
     canvas.style.height = Math.round(CELL_H * S.scale) + "px";
+  }
+
+  /** 同步补画当前帧：任何清空画布的路径（fitCanvas/换肤/改尺寸）之后都要调用，
+   *  不能指望 rAF——宿主 overlay 被遮挡时 rAF 可能长期停摆（0.5.7 实测根因）。 */
+  function paintNow() {
+    const t = performance.now();
+    if (S.skinOk && S.atlasOk && S.skin && S.skinImg) drawSprite();
+    else drawFallback(t);
   }
 
   // ---------- 当前帧契约 ----------
@@ -458,13 +474,25 @@
   }
 
   function frame(t) {
+    S.lastFrameAt = performance.now();
     stepFlight(t / 1000);
     advance(t);
     S.lastT = t;
-    if (S.skinOk && S.atlasOk) { drawSprite(); }
+    if (S.skinOk && S.atlasOk && S.skin && S.skinImg) drawSprite();
     else drawFallback(t);
-    requestAnimationFrame(frame);
+    // 只挂一条 rAF 链：看门狗驱动的 frame 不得重复注册（否则恢复后多链并行）
+    if (!S.rafChained) {
+      S.rafChained = true;
+      requestAnimationFrame((tt) => { S.rafChained = false; frame(tt); });
+    }
   }
+
+  // rAF 停摆看门狗：透明置顶 overlay 被原生 occlusion 误判为「完全被遮挡」时，
+  // Chromium 会暂停该页 rAF——换肤/改尺寸清空画布后永远没人重画（桌宠凭空消失），
+  // 抛掷飞行积分也会冻结。500ms 兜底驱动同一帧函数，rAF 恢复后自动回到满帧。
+  setInterval(() => {
+    if (performance.now() - S.lastFrameAt > 900) frame(performance.now());
+  }, 500);
 
   // ---------- 交互 ----------
   // 拖拽协议（0.4.2 重写，实机：0.4.1 往左上拖反而往左下慢速漂移）：
@@ -641,6 +669,7 @@
       const skin = S.skins.find((s) => s.id === active) || S.skins[0] || null;
       loadSkin(skin);
       fitCanvas();
+      paintNow();
       if (!skin) say("还没有皮肤，暂用小鲸鱼陪你~");
     } catch {
       say("连不上插件服务");
@@ -662,7 +691,18 @@
         // 皮肤切换要热生效：agent 调 pet_skin / 用户从菜单换皮肤后，overlay 已经在跑，
         // 不能等到下次打开页面才换。
         const wantSkin = (data.config || {}).activeSkinId || null;
-        const nextSkin = S.skins.find((s) => s.id === wantSkin) || S.skins[0] || null;
+        let nextSkin = S.skins.find((s) => s.id === wantSkin) || null;
+        if (wantSkin && !nextSkin && performance.now() - (S.skinsFetchedAt || 0) > 5000) {
+          // 本页皮肤列表是启动时拉的快照；pet_store 新装皮肤 / 皮肤目录配置变更后
+          // 会匹配不到 wantSkin 而错误回落到第一个皮肤——先刷新列表再匹配（限频 5s）。
+          S.skinsFetchedAt = performance.now();
+          try {
+            const sr = await api("/api/skins");
+            S.skins = (await sr.json()).skins || S.skins;
+            nextSkin = S.skins.find((s) => s.id === wantSkin) || null;
+          } catch { /* 刷新失败按旧列表处理 */ }
+        }
+        if (!nextSkin) nextSkin = S.skins[0] || null;
         const curId = S.skin ? S.skin.id : null;
         const nextId = nextSkin ? nextSkin.id : null;
         if (nextId !== curId && nextSkin) { loadSkin(nextSkin); say("换上" + nextSkin.displayName + "啦~"); }

@@ -261,8 +261,39 @@ export async function activate(api) {
     }
   );
 
-  // 工具：查看/修改桌宠设置——宿主暂无插件设置面板渲染（settingsPages 只展示不打开），
-  // 这是用户改 petEnabled / 尺寸 / 入睡时间等的唯一入口。
+  // 宿主设置页（SecAgent 设置 → 桌面宠物）：声明式 describe/set，改完立即生效。
+  // 0.5.7 起宿主渲染端支持通用插件设置表单；pet_config 工具保留作为 Agent 入口。
+  if (typeof api.registerSettingsHandler === "function") {
+    api.registerSettingsHandler("desktop-pet-settings", async (action, args = {}) => {
+      if (action === "describe") {
+        return { ok: true, groups: describeSettings(), values: readConfig() };
+      }
+      if (action === "skins") {
+        return { ok: true, skins: listSkins().map((s) => ({ id: s.id, displayName: s.displayName })), active: activeSkinId() };
+      }
+      if (action === "set") {
+        const raw = (typeof api.getConfig === "function" && api.getConfig()) || {};
+        const next = { ...raw, ...(args || {}) };
+        const { config, dropped } = mergeConfig(next);
+        if (typeof api.setConfig !== "function") throw new Error("当前宿主不支持写插件配置（api.setConfig 缺失）");
+        api.setConfig({ ...next, ...config });
+        // size 热生效：overlay 窗口跟随调整（anchor=bottom-right 原地缩放）
+        if (overlay && typeof overlay.setBounds === "function") {
+          try {
+            const { width, height } = overlaySizeFor(config.size);
+            await overlay.setBounds({ width, height, anchor: "bottom-right" });
+          } catch { /* 扩窗失败不阻塞设置写入，渲染页仍会热更画布 */ }
+        }
+        return {
+          ok: true, values: config,
+          ...(dropped.length ? { note: `以下键已按取值范围修正：${dropped.join(", ")}` } : {})
+        };
+      }
+      return { ok: false, error: `未知 action：${action}` };
+    });
+  }
+
+  // 工具：查看/修改桌宠设置——Agent 用；用户手动调节走宿主设置页（桌面宠物卡片）。
   api.registerTool(
     {
       name: "pet_config",
